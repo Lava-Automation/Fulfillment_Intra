@@ -1,8 +1,8 @@
 import { useState, useMemo } from "react";
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  THEME TOKENS
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 const T = {
   bg:"#F0EDE8", surface:"#FAFAF8", surface2:"#EEEBE5",
   border:"#D8D4CC", border2:"#C8C4BB",
@@ -14,9 +14,9 @@ const T = {
   blue:"#1A5FAA", blueBg:"#E8F0FA",
 };
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  DATA
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 const KANBAN_COLS = ['Onboarding','QAQC','Training','Support','Monthly','Quarterly','Ad-Hoc','Cancelled'];
 const STAGE_COLORS = {
   Onboarding: T.blue, QAQC:'#9A4FCC', Training: T.green, Support: T.red,
@@ -126,7 +126,7 @@ const ACCT_DETAIL = {
     meetingContacts:[{role:'Agency Owner',name:'Rick Torres',days:14},{role:'Project Manager',name:'Sam R.',days:5},{role:'Account Manager',name:'Omar Fields',days:31},{role:'VA',name:'Tyler James',days:2}],
     meetingRecs:[{type:'warn',text:'Two high-severity tickets open with no resolution ETA shared to client. Send a dev update before the escalation call.'},{type:'idea',text:'Salesforce API rate limits are a recurring issue — flag this for a permanent fix.'},{type:'trend',text:'Account is At Risk. Consider scheduling a QBR-style review to realign expectations.'}],
     meetingAsks:[{label:'Asked for a testimonial',days:null},{label:'Asked for a referral',days:null},{label:'Pitched a cross-sell',days:null},{label:'Offered more VA or automation help',days:5},{label:'Asked if they know an agency that needs us',days:'not yet'}],
-    notes:{sales:[{date:'May 15, 2026',author:'Jordan Cole',text:'Account flagged At Risk. Checking in with Rick Torres to maintain relationship. No churn signals yet.'},{date:'Feb 14, 2026',author:'Jordan Cole',text:'Outbound close — contacted via LinkedIn. Rick Torres decision maker. Signed Starter Plan.'}],am:[{date:'May 29, 2026',author:'Omar Fields',text:'Account flagged At Risk due to open high-severity tickets. Escalation meeting scheduled May 31.'},{date:'May 15, 2026',author:'Omar Fields',text:'Check-in with Paula Nguyen. Frustration noted around CRM sync delays.'}],pm:[{date:'May 29, 2026',author:'Sam R.',text:'Phase 2 behind schedule due to Salesforce permission issues. CRM data sync at 85% complete.'},{date:'May 15, 2026',author:'Sam R.',text:'CRM data sync at 80%. Salesforce permissions issue escalated to dev.'}],dev:[{date:'May 29, 2026',author:'Dev Team',text:'Trigger webhook not registering — investigating Salesforce API rate limit. ETA 48-72 hrs.'},{date:'Apr 30, 2026',author:'Dev Team',text:'Salesforce field permission issue resolved. Write access restored.'}]},
+    notes:{sales:[{date:'May 15, 2026',author:'Jordan Cole',text:'Account flagged At Risk. Checking in with Rick Torres to maintain relationship. No churn signals yet.'},{date:'Feb 14, 2026',author:'Jordan Cole',text:'Outbound close — contacted via LinkedIn. Rick Torres decision maker. Signed Starter Plan.'}],am:[{date:'May 29, 2026',author:'Omar Fields',text:'Account flagged At Risk due to open high-severity tickets. Escalation meeting scheduled May 31.'},{date:'May 15, 2026',author:'Omar Fields',text:'Check-in with Paula Nguyen. Frustration noted around CRM sync delays.'}],pm:[{date:'May 29, 2026',author:'Sam R.',text:'Phase 2 behind schedule due to Salesforce permission issues. CRM data sync at 85% complete.'},{date:'May 15, 2026',author:'Sam R.',text:'CRM data sync at 80%. Salesforce permissions issue escalated to dev.'}],dev:[{date:'May 29, 2026',author:'Dev Team',text:'Trigger webhook not registering — investigating Salesforce API rate limit. ETA 48–72 hrs.'},{date:'Apr 30, 2026',author:'Dev Team',text:'Salesforce field permission issue resolved. Write access restored.'}]},
     timeline:[{date:'May 29, 2026',label:'Ticket Opened',detail:'#TKT-0042 — Automation triggers not firing',color:'r'},{date:'May 27, 2026',label:'Ticket Opened',detail:'#TKT-0040 — CRM sync duplicating records',color:'r'},{date:'May 15, 2026',label:'Meeting Held',detail:'Weekly check-in with Paula Nguyen',color:'b'},{date:'Feb 14, 2026',label:'Account Created',detail:'TechNova Inc onboarded on Starter Plan',color:'la'}],
   },
   meridian: {
@@ -157,9 +157,9 @@ const VA_PROFILES = [
   {id:'natalie',av:'NW',bg:'#1A7A7A',name:'Natalie Wong',title:'Junior VA',status:'onboarding',account:'Coral Dynamics',trainer:'Brandon Torres / Yvonne Mills',startDate:'May 12, 2026',modsDone:1,modsTotal:8,taskComp:15,tasksRun:320,issues:['Early stage — only 1 of 8 modules complete','Account still in Phase 1 Discovery'],bio:'Brand new VA in onboarding. Coral Dynamics is a new account and both are in early stages.',skills:['Getting started']},
 ];
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  HELPERS
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 const fm = { fontFamily: "'IBM Plex Mono', monospace" };
 const fd = { fontFamily: "'Syne', sans-serif" };
 const fb = { fontFamily: "'IBM Plex Sans', sans-serif" };
@@ -233,9 +233,9 @@ function fcClass(f) { return f==='Active'?'pg':f==='Paused'?'py':'pr'; }
 function ccClass(c) { return c==='Healthy'?'pg':c==='At Risk'?'py':c==='New'?'pb':'pr'; }
 function getAcctDetail(id) { return ACCT_DETAIL[id] || { profile:{agencyName:'—',location:'—',phone:'—',startDate:'—',onboardingDate:null,trainingDate:null,goLiveDate:null,plan:'—',fulfillment:'—',csStatus:'—',cancelDate:null,crm:'—',ams:'—',website:'',googleReview:'',techList:[],openTickets:0}, contacts:{va:null,lava:[],agency:[]}, tickets:{open:[],closed:[]}, meetings:{scheduled:[],previous:[]}, meetingContacts:[], meetingRecs:[], meetingAsks:[], notes:{sales:[],am:[],pm:[],dev:[]}, timeline:[] }; }
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  GLOBAL STYLE (injected once)
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 const GLOBAL_CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -259,9 +259,9 @@ input,select,textarea{font-family:'IBM Plex Sans',sans-serif;outline:none;}
 input:focus,select:focus,textarea:focus{border-color:${T.lava} !important;}
 `;
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  ACCOUNT DETAIL TABS
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 function TabOverview({ d }) {
   const p = d.profile;
   const tech = p.techList.map(t => (
@@ -426,7 +426,7 @@ function TabMeetings({ d }) {
           </div>
           <div style={{ padding:'4px 16px 8px' }}>
             {d.meetingRecs.map((r,i) => {
-              const icon = r.type==='trend'?'📈':r.type==='idea'?'💡':'⏳';
+              const icon = r.type==='trend'?'↗':r.type==='idea'?'💡':'△';
               return (
                 <div key={i} style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'10px 0', borderBottom:`1px solid ${T.border}` }}>
                   <span style={{ fontSize:13, color:T.ink3, flexShrink:0, marginTop:1 }}>{icon}</span>
@@ -635,9 +635,9 @@ function TabBuildScore({ acctId }) {
   );
 }
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  ACCOUNT DETAIL
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 function AccountDetail({ acctId, accounts, onBack, initialTab }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'overview');
   const acct = accounts.find(a => a.id === acctId) || {};
@@ -682,9 +682,9 @@ function AccountDetail({ acctId, accounts, onBack, initialTab }) {
   );
 }
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  PAGES
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 function Dashboard({ onNav, onOpenAcct }) {
   const csOrder = {Cancelled:0,'At Risk':1,New:2,Healthy:3};
   const sorted = [...ACCOUNTS_DATA].sort((a,b) => (csOrder[a.csStatus]||9)-(csOrder[b.csStatus]||9));
@@ -692,7 +692,7 @@ function Dashboard({ onNav, onOpenAcct }) {
     { n:12, label:'Active Accounts', sub:'▲ 2 new this month', page:'accounts', nc:T.ink },
     { n:5,  label:'Open Tickets',    sub:'▲ 2 since last week', page:'tickets', nc:T.red },
     { n:24, label:'Active VAs',      sub:'▲ 3 onboarded', page:'vaoverview', nc:T.ink },
-    { n:3,  label:'Pending Meetings',sub:'⏳ Awaiting confirm', page:'meetings', nc:T.yellow },
+    { n:3,  label:'Pending Meetings',sub:'→ Awaiting confirm', page:'meetings', nc:T.yellow },
   ];
   const activity = [
     {c:'r', text:<><strong>TechNova Inc</strong> submitted a High ticket — "Triggers not firing"</>, sub:'2 min ago · Support'},
@@ -827,7 +827,7 @@ function AccountsPage({ onOpenAcct }) {
         <select value={fCs} onChange={e => setFCs(e.target.value)} style={selStyle}><option value="">All CS Status</option><option>Healthy</option><option>At Risk</option><option>New</option></select>
         <select value={fFulfill} onChange={e => setFFulfill(e.target.value)} style={selStyle}><option value="">All Fulfillment</option><option>Active</option><option>Paused</option><option>Cancelled</option></select>
         <select value={fTix} onChange={e => setFTix(e.target.value)} style={selStyle}><option value="">All Tickets</option><option value="0">No open tickets</option><option value="1+">Has open tickets</option></select>
-        <select value={fProg} onChange={e => setFProg(e.target.value)} style={selStyle}><option value="">All Progress</option><option value="0-25">0-25%</option><option value="26-50">26-50%</option><option value="51-75">51-75%</option><option value="76-100">76-100%</option></select>
+        <select value={fProg} onChange={e => setFProg(e.target.value)} style={selStyle}><option value="">All Progress</option><option value="0-25">0–25%</option><option value="26-50">26–50%</option><option value="51-75">51–75%</option><option value="76-100">76–100%</option></select>
         <button onClick={clearAll} style={{ background:'none', border:`1px solid ${T.border}`, color:T.ink3, ...fm, fontSize:11, padding:'7px 12px', cursor:'pointer' }}>Clear</button>
         <span style={{ ...fm, fontSize:11, color:T.ink3 }}>{filtered.length} of {ACCOUNTS_DATA.length} accounts</span>
       </div>
@@ -941,9 +941,10 @@ function TicketDetail({ ticket, onClose }) {
   const [noteSaved, setNoteSaved] = useState(false);
   const [activeTab, setActiveTab] = useState('notes');
 
+  const bc = { High:T.red, Medium:'#D4A017', Low:T.green };
+  const pclass = { High:'pr', Medium:'py', Low:'pg' };
   const devMember = DEV_MEMBERS.find(d => d.name === ticket.dev);
   const stageColor = TKT_STAGE_COLORS[ticket.stage] || T.ink3;
-  const pclass = { High:'pr', Medium:'py', Low:'pg' };
 
   const saveNote = () => {
     if (!newNote.trim()) return;
@@ -992,7 +993,7 @@ function TicketDetail({ ticket, onClose }) {
                 )}
               </div>
             </div>
-            <button onClick={onClose} style={{ background:'none', border:'none', color:T.ink3, cursor:'pointer', fontSize:20, lineHeight:1, flexShrink:0, padding:4 }}>×</button>
+            <button onClick={onClose} style={{ background:'none', border:'none', color:T.ink3, cursor:'pointer', fontSize:20, lineHeight:1, flexShrink:0, padding:4 }}>✕</button>
           </div>
         </div>
 
@@ -1066,7 +1067,7 @@ function TicketDetail({ ticket, onClose }) {
                 ? <div style={{ textAlign:'center', padding:'30px 20px', ...fm, fontSize:12, color:T.ink3 }}>No files attached yet.</div>
                 : files.map((f, i) => {
                     const ext = f.name.split('.').pop().toLowerCase();
-                    const icon = ['png','jpg','jpeg','gif','webp'].includes(ext)?'🖼️':['pdf'].includes(ext)?'📄':['csv','xlsx'].includes(ext)?'📊':['mp4','mov'].includes(ext)?'🎬':'📄';
+                    const icon = ['png','jpg','jpeg','gif','webp'].includes(ext)?'🖼️':['pdf'].includes(ext)?'📄':['csv','xlsx'].includes(ext)?'📊':['mp4','mov'].includes(ext)?'🎬':'📎';
                     return (
                       <div key={i} style={{ background:T.surface, border:`1px solid ${T.border}`, padding:'12px 14px', marginBottom:8, display:'flex', alignItems:'center', gap:12 }}>
                         <span style={{ fontSize:20, flexShrink:0 }}>{icon}</span>
@@ -1074,7 +1075,7 @@ function TicketDetail({ ticket, onClose }) {
                           <div style={{ fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{f.name}</div>
                           <div style={{ ...fm, fontSize:10, color:T.ink3, marginTop:2 }}>{f.size} · {f.date}</div>
                         </div>
-                        <button onClick={() => setFiles(prev => prev.filter((_,j) => j !== i))} style={{ background:'none', border:'none', color:T.ink3, cursor:'pointer', fontSize:14, flexShrink:0 }}>×</button>
+                        <button onClick={() => setFiles(prev => prev.filter((_,j) => j !== i))} style={{ background:'none', border:'none', color:T.ink3, cursor:'pointer', fontSize:14, flexShrink:0 }}>✕</button>
                       </div>
                     );
                   })
@@ -1422,10 +1423,10 @@ function CommsPage() {
   };
   const selStyle = { width:'100%', background:T.surface2, border:`1px solid ${T.border}`, color:T.ink, padding:'10px 12px', ...fb, fontSize:13, marginBottom:14 };
   const sent_msgs = [
-    {c:'la',text:<><strong>Announcement</strong> — All: "Phase 2 Complete"</>,sub:'Apr 28 · Darek C.'},
-    {c:'b',text:<><strong>Update</strong> — Acme: "HubSpot Testing Complete"</>,sub:'Apr 22 · Dev Team'},
-    {c:'y',text:<><strong>Operational</strong> — All: "Maintenance Apr 20"</>,sub:'Apr 15 · Ops'},
-    {c:'g',text:<><strong>Training</strong> — All: "Module 6 Released"</>,sub:'Apr 10 · Training'},
+    {c:'la',text:<><strong>Announcement</strong> → All: "Phase 2 Complete"</>,sub:'Apr 28 · Darek C.'},
+    {c:'b',text:<><strong>Update</strong> → Acme: "HubSpot Testing Complete"</>,sub:'Apr 22 · Dev Team'},
+    {c:'y',text:<><strong>Operational</strong> → All: "Maintenance Apr 20"</>,sub:'Apr 15 · Ops'},
+    {c:'g',text:<><strong>Training</strong> → All: "Module 6 Released"</>,sub:'Apr 10 · Training'},
   ];
   const dotC = {la:T.lava,b:T.blue,y:'#D4A017',g:T.green};
   return (
@@ -1451,7 +1452,7 @@ function CommsPage() {
         <div style={{ background:T.surface, border:`1px solid ${T.border}`, padding:18 }}>
           <div style={{ ...fm, fontSize:10, letterSpacing:3, textTransform:'uppercase', color:T.ink3, marginBottom:12 }}>Templates</div>
           <div style={{ display:'flex', flexDirection:'column', gap:6, marginBottom:18 }}>
-            {[['phase','📋 Phase Completion Announcement'],['maint','⚙️ Maintenance Notice'],['train','🎓 Training Module Release'],['alert','🚨 Action Required Alert']].map(([k,lbl]) => (
+            {[['phase','📋 Phase Completion Announcement'],['maint','⚙️ Maintenance Notice'],['train','📚 Training Module Release'],['alert','🚨 Action Required Alert']].map(([k,lbl]) => (
               <button key={k} onClick={() => { const t=TPLS[k]; setType(t.type); setSubj(t.subj); setBody(t.body); }} style={{ background:'none', border:`1px solid ${T.border}`, color:T.ink2, padding:'8px 12px', ...fb, fontSize:12, cursor:'pointer', textAlign:'left' }}>{lbl}</button>
             ))}
           </div>
@@ -1472,7 +1473,7 @@ function DocsPage() {
   const cats = [
     {cat:'Onboarding',icon:'📋',items:[{name:'Client Onboarding Checklist',desc:'Step-by-step checklist for new account setup'},{name:'Welcome Packet — Client Version',desc:'Branded welcome document sent to new clients'},{name:'LAVA Platform Overview (PDF)',desc:'Overview of all LAVA automation services'}]},
     {cat:'SOPs & Workflows',icon:'⚙️',items:[{name:'Lead Routing SOP',desc:'Standard operating procedure for lead assignment'},{name:'Email Sequence Setup Guide',desc:'How to configure and launch drip campaigns'},{name:'CRM Integration Playbook',desc:'Step-by-step CRM connection and field mapping'},{name:'VA Task Management SOP',desc:'Daily workflow and task handling for VAs'}]},
-    {cat:'Training Materials',icon:'🎓',items:[{name:'VA Training Module Index',desc:'Full list of all 8 training modules with links'},{name:'Platform Walkthrough (Recording)',desc:'Video walkthrough of client portal features'},{name:'HubSpot Basics for VAs',desc:'Getting started guide for VA HubSpot usage'}]},
+    {cat:'Training Materials',icon:'📚',items:[{name:'VA Training Module Index',desc:'Full list of all 8 training modules with links'},{name:'Platform Walkthrough (Recording)',desc:'Video walkthrough of client portal features'},{name:'HubSpot Basics for VAs',desc:'Getting started guide for VA HubSpot usage'}]},
     {cat:'Contracts & Billing',icon:'📄',items:[{name:'Master Service Agreement',desc:'Signed MSA on file for this account'},{name:'Scope of Work',desc:'Current SOW document for active engagement'},{name:'Invoice History',desc:'Billing records and payment history'}]},
     {cat:'Templates',icon:'🗂️',items:[{name:'Client Update Email Template',desc:'Standardized template for project updates'},{name:'Meeting Agenda Template',desc:'Pre-built agenda for recurring check-ins'},{name:'Escalation Notice Template',desc:'Template for urgent client communications'}]},
   ];
@@ -1646,9 +1647,9 @@ function ComingSoonPage({ title, icon, desc }) {
   );
 }
 
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 //  ROOT APP
-// ---------------------------------------------
+// ─────────────────────────────────────────────
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState('');
@@ -1672,10 +1673,10 @@ export default function App() {
 
   const PAGE_LABELS = { dashboard:'Dashboard', accounts:'Accounts', vaoverview:'VA Overview', lavatrainers:'LAVA Trainers', tickets:'Support Tickets', meetings:'Meeting Requests', comms:'Send Communication', docs:'LAVA Docs', incident:'Incident / Postmortem', brainsignals:'Brain Signals Composer', qalog:'QA Defect Log', crmcurriculum:'CRM Training Curriculum' };
   const SB_ITEMS = [
-    { section:'Fulfillment Overview', items:[{page:'dashboard',label:'Dashboard',icon:'◆'},{page:'accounts',label:'Accounts',icon:'⬡',badge:12},{page:'vaoverview',label:'VA Overview',icon:'◉'}] },
-    { section:'Dev Support', items:[{page:'lavatrainers',label:'LAVA Trainers',icon:'◈'},{page:'tickets',label:'Support Tickets',icon:'✦',badge:5},{page:'meetings',label:'Meeting Requests',icon:'◷',badge:3}] },
-    { section:'Tools', items:[{page:'incident',label:'Incident / Postmortem',icon:'◬'},{page:'brainsignals',label:'Brain Signals Composer',icon:'◇'},{page:'qalog',label:'QA Defect Log',icon:'◎'},{page:'crmcurriculum',label:'CRM Training Curriculum',icon:'❧'}] },
-    { section:'Team', items:[{page:'comms',label:'Send Communication',icon:'✉'},{page:'docs',label:'LAVA Docs',icon:'▤'}] },
+    { section:'Fulfillment Overview', items:[{page:'dashboard',label:'Dashboard',icon:'◈'},{page:'accounts',label:'Accounts',icon:'⬡',badge:12},{page:'vaoverview',label:'VA Overview',icon:'◉'}] },
+    { section:'Dev Support', items:[{page:'lavatrainers',label:'LAVA Trainers',icon:'◆'},{page:'tickets',label:'Support Tickets',icon:'◎',badge:5},{page:'meetings',label:'Meeting Requests',icon:'◷',badge:3}] },
+    { section:'Tools', items:[{page:'incident',label:'Incident / Postmortem',icon:'◌'},{page:'brainsignals',label:'Brain Signals Composer',icon:'◍'},{page:'qalog',label:'QA Defect Log',icon:'◎'},{page:'crmcurriculum',label:'CRM Training Curriculum',icon:'◧'}] },
+    { section:'Team', items:[{page:'comms',label:'Send Communication',icon:'◫'},{page:'docs',label:'LAVA Docs',icon:'◈'}] },
   ];
 
   if (!loggedIn) {
@@ -1747,7 +1748,7 @@ export default function App() {
             {page === 'docs'           && <DocsPage />}
             {page === 'incident'       && <ComingSoonPage title="Incident / Postmortem" icon="🚨" desc="Log and track incidents, outages, and post-mortem reviews." />}
             {page === 'brainsignals'   && <ComingSoonPage title="Brain Signals Composer" icon="🧠" desc="Compose and manage automated intelligence signals across accounts." />}
-            {page === 'qalog'          && <ComingSoonPage title="QA Defect Log" icon="🐛" desc="Track quality assurance defects, test results, and resolution status." />}
+            {page === 'qalog'          && <ComingSoonPage title="QA Defect Log" icon="🔍" desc="Track quality assurance defects, test results, and resolution status." />}
             {page === 'crmcurriculum'  && <ComingSoonPage title="CRM Training Curriculum" icon="📚" desc="Manage and assign CRM training curriculum for VAs and staff." />}
           </div>
         </div>
