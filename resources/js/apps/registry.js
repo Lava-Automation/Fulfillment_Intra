@@ -15,13 +15,12 @@ export const APPS = [
   // until each app's folder exists at resources/js/apps/<app>/index.jsx —
   // otherwise the lazy import resolves to a missing file and the build fails.
   // Uncomment each as it is translated (portal first; it owns '/').
-  //
-  // {
-  //   key: 'portal',
-  //   label: 'Portal',
-  //   path: '/',
-  //   component: lazy(() => import('./portal/index.jsx')),
-  // },
+  {
+    key: 'portal',
+    label: 'Portal',
+    path: '/',
+    component: lazy(() => import('./portal/index.jsx')),
+  },
   // {
   //   key: 'clientprofile',
   //   label: 'Client Profiles',
