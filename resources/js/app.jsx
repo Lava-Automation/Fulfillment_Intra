@@ -1,17 +1,9 @@
+// resources/js/app.jsx
+// Vite entry point. Fixed mount referenced by welcome.blade.php.
+// This file stays tiny on every branch: it only imports and renders the shell.
+// All real shell logic lives in mainapp.jsx.
 import { createRoot } from 'react-dom/client';
-
-function App() {
-    return (
-        <div className="flex min-h-screen items-center justify-center bg-black">
-            <h1 className="text-5xl font-semibold text-white">
-                Welcome to Lava
-            </h1>
-        </div>
-    );
-}
+import MainApp from './mainapp';
 
 const el = document.getElementById('app');
-
-if (el) {
-    createRoot(el).render(<App />);
-}
+if (el) createRoot(el).render(<MainApp />);
