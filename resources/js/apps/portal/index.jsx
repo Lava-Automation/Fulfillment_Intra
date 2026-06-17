@@ -638,11 +638,74 @@ function TabBuildScore({ acctId }) {
 // ─────────────────────────────────────────────
 //  ACCOUNT DETAIL
 // ─────────────────────────────────────────────
-function AccountDetail({ acctId, accounts, onBack, initialTab }) {
+function AccountDetail({ acctId, accounts, supabase, onBack, initialTab }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'overview');
   const acct = accounts.find(a => a.id === acctId) || {};
-  const d = getAcctDetail(acctId);
   const cc = ccClass(acct.csStatus);
+
+  // Pass 2: per-account detail from real tables. Overview / Tickets / Meetings /
+  // Notes / Timeline are wired to Supabase; Contacts / KPIs / Build Score stay
+  // on the mock default (no backing data in the schema yet).
+  const [d, setD] = useState(() => getAcctDetail(acctId));
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const fmt = (x) => x ? new Date(x).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      const sev = { H: 'High', M: 'Medium', L: 'Low' };
+      const [acctRes, ticketsRes, meetingsRes, notesRes, tlRes, empRes] = await Promise.all([
+        supabase.from('accounts').select('plan,crm,ams,fulfillment,cs_status,since_date,cancel_date,hubspot_company_id').eq('account_id', acctId).maybeSingle(),
+        supabase.from('tickets').select('ticket_id,title,priority,status,created_at,resolved_at').eq('account_id', acctId).order('created_at', { ascending: false }),
+        supabase.from('meetings').select('type,title,status,meeting_date,scheduled_minutes,actual_minutes').eq('account_id', acctId).order('meeting_date', { ascending: false }),
+        supabase.from('notes').select('department,author_id,body,created_at').eq('account_id', acctId).order('created_at', { ascending: false }),
+        supabase.from('timeline_events').select('event_date,label,detail,color').eq('account_id', acctId).order('event_date', { ascending: false }),
+        supabase.from('employees').select('id,name'),
+      ]);
+      if (!alive) return;
+      const a = acctRes.data || {};
+      let company = {};
+      if (a.hubspot_company_id) {
+        const { data: c } = await supabase.from('hubspot_companies').select('name,phone,city,state,domain').eq('id', a.hubspot_company_id).maybeSingle();
+        company = c || {};
+      }
+      const empName = Object.fromEntries((empRes.data || []).map(e => [e.id, e.name]));
+      const tickets = ticketsRes.data || [];
+      const tRow = (t) => ({ id: String(t.ticket_id).slice(0, 8), title: t.title, severity: sev[t.priority] || t.priority, date: fmt(t.created_at), category: 'Dev Support', resolved: fmt(t.resolved_at) });
+      const open = tickets.filter(t => t.status !== 'resolved').map(tRow);
+      const closed = tickets.filter(t => t.status === 'resolved').map(tRow);
+      const mtgRow = (m) => ({ type: m.type || m.title || 'Meeting', date: fmt(m.meeting_date), time: m.actual_minutes ? `${m.actual_minutes} min` : (m.scheduled_minutes ? `${m.scheduled_minutes} min planned` : ''), attendees: '—', notes: m.title || '' });
+      const meetingsAll = meetingsRes.data || [];
+      const scheduled = meetingsAll.filter(m => m.status === 'scheduled').map(mtgRow);
+      const previous = meetingsAll.filter(m => m.status !== 'scheduled').map(mtgRow);
+      const noteBucket = { sales: [], am: [], pm: [], dev: [] };
+      (notesRes.data || []).forEach(n => {
+        const dep = (n.department || '').toLowerCase();
+        const key = dep.includes('sales') ? 'sales' : (dep.includes('account') || dep === 'am') ? 'am' : dep.includes('dev') ? 'dev' : 'pm';
+        noteBucket[key].push({ date: fmt(n.created_at), author: empName[n.author_id] || 'Staff', text: n.body || '' });
+      });
+      const timeline = (tlRes.data || []).map(e => ({ date: fmt(e.event_date), label: e.label, detail: e.detail, color: e.color }));
+      setD({
+        profile: {
+          agencyName: company.name || acct.name || '—',
+          location: [company.city, company.state].filter(Boolean).join(', ') || '—',
+          phone: company.phone || '—',
+          startDate: fmt(a.since_date) || '—',
+          onboardingDate: null, trainingDate: null, goLiveDate: null,
+          plan: a.plan || '—', fulfillment: a.fulfillment || '—', csStatus: a.cs_status || '—',
+          cancelDate: a.cancel_date ? fmt(a.cancel_date) : null,
+          crm: a.crm || '—', ams: a.ams || '—',
+          website: company.domain ? (String(company.domain).startsWith('http') ? company.domain : 'https://' + company.domain) : '',
+          googleReview: '', techList: [], openTickets: open.length,
+        },
+        contacts: { va: null, lava: [], agency: [] },
+        tickets: { open, closed },
+        meetings: { scheduled, previous },
+        meetingContacts: [], meetingRecs: [], meetingAsks: [],
+        notes: noteBucket,
+        timeline,
+      });
+    })();
+    return () => { alive = false; };
+  }, [acctId, supabase, acct.name]);
 
   const tabs = [
     { key:'overview',   label:'Agency Overview' },
@@ -659,7 +722,7 @@ function AccountDetail({ acctId, accounts, onBack, initialTab }) {
     <div className="page-enter">
       <button onClick={onBack} style={{ background:'none', border:`1px solid ${T.border}`, color:T.ink2, ...fm, fontSize:11, padding:'7px 14px', cursor:'pointer', marginBottom:18 }}>← Back to Accounts</button>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:10, marginBottom:6 }}>
-        <div style={{ ...fd, fontSize:26, fontWeight:800 }}>{d.profile.agencyName}</div>
+        <div style={{ ...fd, fontSize:26, fontWeight:800 }}>{acct.name || d.profile.agencyName}</div>
         <Pill type={cc}>{acct.csStatus}</Pill>
       </div>
       <div style={{ ...fm, fontSize:11, color:T.ink3, marginBottom:18 }}>
@@ -1748,7 +1811,7 @@ export default function App({ session, supabase }) {
           <div style={{ flex:1, padding:24 }}>
             {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} />}
             {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
-            {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
+            {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
             {page === 'vaoverview'     && <VAOverviewPage />}
             {page === 'lavatrainers'   && <LAVATrainersPage />}
             {page === 'tickets'        && <TicketsPage />}
