@@ -748,21 +748,38 @@ function AccountDetail({ acctId, accounts, supabase, onBack, initialTab }) {
 // ─────────────────────────────────────────────
 //  PAGES
 // ─────────────────────────────────────────────
-function Dashboard({ onNav, onOpenAcct, accounts }) {
+function Dashboard({ onNav, onOpenAcct, accounts, supabase }) {
   const csOrder = {Cancelled:0,'At Risk':1,New:2,Healthy:3};
   const sorted = [...accounts].sort((a,b) => (csOrder[a.csStatus]||9)-(csOrder[b.csStatus]||9));
+  const [vaCount, setVaCount] = useState(0);
+  const [pendingMtgs, setPendingMtgs] = useState(0);
+  const [activity, setActivity] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [vasRes, mtgRes, logRes] = await Promise.all([
+        supabase.from('vas').select('employee_id', { count: 'exact', head: true }),
+        supabase.from('meetings').select('meeting_id', { count: 'exact', head: true }).eq('status', 'scheduled'),
+        supabase.from('activity_log').select('app,action,actor_email,created_at').order('created_at', { ascending: false }).limit(6),
+      ]);
+      if (!alive) return;
+      setVaCount(vasRes.count || 0);
+      setPendingMtgs(mtgRes.count || 0);
+      const appColor = { devsupport: 'r', qa: 'la', training: 'g', clientprofile: 'b', portal: 'y' };
+      setActivity((logRes.data || []).map(l => ({
+        c: appColor[l.app] || 'b',
+        text: <><strong>{l.actor_email || 'Someone'}</strong> · {l.action}</>,
+        sub: new Date(l.created_at).toLocaleString(),
+      })));
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
+  const openTix = accounts.reduce((s, a) => s + (a.tix || 0), 0);
   const stats = [
-    { n:12, label:'Active Accounts', sub:'▲ 2 new this month', page:'accounts', nc:T.ink },
-    { n:5,  label:'Open Tickets',    sub:'▲ 2 since last week', page:'tickets', nc:T.red },
-    { n:24, label:'Active VAs',      sub:'▲ 3 onboarded', page:'vaoverview', nc:T.ink },
-    { n:3,  label:'Pending Meetings',sub:'→ Awaiting confirm', page:'meetings', nc:T.yellow },
-  ];
-  const activity = [
-    {c:'r', text:<><strong>TechNova Inc</strong> submitted a High ticket — "Triggers not firing"</>, sub:'2 min ago · Support'},
-    {c:'b', text:<><strong>Meridian Group</strong> scheduled a Phase Review for Jun 3</>, sub:'18 min ago · Meetings'},
-    {c:'g', text:<><strong>Acme Corp</strong> completed Module 6 VA Training</>, sub:'1 hr ago · Training'},
-    {c:'la',text:<><strong>Skyline Ventures</strong> milestone marked complete</>, sub:'3 hrs ago · Roadmap'},
-    {c:'y', text:<><strong>Blueridge Digital</strong> lead response KPI flagged At Risk</>, sub:'5 hrs ago · KPIs'},
+    { n:accounts.length, label:'Active Accounts', sub:'', page:'accounts', nc:T.ink },
+    { n:openTix,         label:'Open Tickets',    sub:'', page:'tickets', nc:T.red },
+    { n:vaCount,         label:'Active VAs',       sub:'', page:'vaoverview', nc:T.ink },
+    { n:pendingMtgs,     label:'Pending Meetings', sub:'', page:'meetings', nc:T.yellow },
   ];
   const dotC = {r:T.red,b:T.blue,g:T.green,la:T.lava,y:'#D4A017'};
   return (
@@ -1198,7 +1215,7 @@ const TICKETS_WITH_DATA = ALL_TICKETS.map(t => ({
 function TicketCard({ t, onClick }) {
   const bc = {High:T.red, Medium:'#D4A017', Low:T.green};
   const pclass = {High:'pr', Medium:'py', Low:'pg'};
-  const devMember = DEV_MEMBERS.find(d => d.name === t.dev);
+  const devInit = (t.dev || '').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
   const stageColor = TKT_STAGE_COLORS[t.stage] || T.ink3;
   const noteCount = t.notes?.length || 0;
   const fileCount = t.files?.length || 0;
@@ -1216,9 +1233,9 @@ function TicketCard({ t, onClick }) {
               {fileCount > 0 && <span style={{ ...fm, fontSize:9, color:T.ink3 }}>📎 {fileCount}</span>}
             </div>
           )}
-          {devMember && (
+          {t.dev && (
             <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-              <div style={{ width:20, height:20, background:devMember.bg, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Syne',sans-serif", fontSize:8, fontWeight:700, flexShrink:0 }}>{devMember.av}</div>
+              <div style={{ width:20, height:20, background:T.dark, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Syne',sans-serif", fontSize:8, fontWeight:700, flexShrink:0 }}>{devInit}</div>
               <span style={{ ...fm, fontSize:10, color:T.ink3 }}>{t.dev}</span>
             </div>
           )}
@@ -1240,7 +1257,7 @@ function TicketCard({ t, onClick }) {
 function TicketKanbanCard({ t, onClick }) {
   const bc = {High:T.red, Medium:'#D4A017', Low:T.green};
   const pclass = {High:'pr', Medium:'py', Low:'pg'};
-  const devMember = DEV_MEMBERS.find(d => d.name === t.dev);
+  const devInit = (t.dev || '').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
   const noteCount = t.notes?.length || 0;
   const fileCount = t.files?.length || 0;
   return (
@@ -1252,9 +1269,9 @@ function TicketKanbanCard({ t, onClick }) {
       <div style={{ fontSize:12, fontWeight:600, lineHeight:1.4, marginBottom:8 }}>{t.title}</div>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:4 }}>
         <Pill type={pclass[t.sev]}>{t.sev}</Pill>
-        {devMember && (
+        {t.dev && (
           <div style={{ display:'flex', alignItems:'center', gap:5 }}>
-            <div style={{ width:18, height:18, background:devMember.bg, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Syne',sans-serif", fontSize:7, fontWeight:700, flexShrink:0 }}>{devMember.av}</div>
+            <div style={{ width:18, height:18, background:T.dark, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Syne',sans-serif", fontSize:7, fontWeight:700, flexShrink:0 }}>{devInit}</div>
             <span style={{ ...fm, fontSize:9, color:T.ink3 }}>{t.dev}</span>
           </div>
         )}
@@ -1272,20 +1289,63 @@ function TicketKanbanCard({ t, onClick }) {
   );
 }
 
-function TicketsPage() {
+function TicketsPage({ supabase }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [devFilter, setDevFilter]       = useState('all');
   const [view, setView]                 = useState('list');
   const [openTicket, setOpenTicket]     = useState(null);
+  const [rows, setRows] = useState([]);
 
-  const shown = TICKETS_WITH_DATA.filter(t => {
+  // Real tickets from Supabase (RLS-filtered). dev = assignee, stage = status
+  // relabeled to the board columns, account/PM resolved by id. notes/files/type
+  // have no schema home yet, so they stay empty (no fabricated data).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const fmt = (x) => x ? new Date(x).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      const sev = { H: 'High', M: 'Medium', L: 'Low' };
+      const stageOf = { open: 'New', in_progress: 'In Progress', waiting: 'Waiting on Client', resolved: 'Completed' };
+      const statusOf = { open: 'open', in_progress: 'in-progress', waiting: 'waiting', resolved: 'resolved' };
+      const [tk, accts, emps] = await Promise.all([
+        supabase.from('tickets').select('ticket_id,account_id,title,priority,status,assigned_to,created_at,resolved_at').order('created_at', { ascending: false }),
+        supabase.from('accounts').select('account_id,pm_id,hubspot_company_id'),
+        supabase.from('employees').select('id,name'),
+      ]);
+      if (!alive) return;
+      const empName = Object.fromEntries((emps.data || []).map(e => [e.id, e.name]));
+      const compIds = [...new Set((accts.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
+      let compName = {};
+      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
+      const acctInfo = Object.fromEntries((accts.data || []).map(a => [a.account_id, { name: compName[a.hubspot_company_id] || '—', pm: empName[a.pm_id] || '' }]));
+      const out = (tk.data || []).map(t => ({
+        id: String(t.ticket_id).slice(0, 8),
+        acct: acctInfo[t.account_id]?.name || '—',
+        title: t.title,
+        sev: sev[t.priority] || t.priority,
+        status: statusOf[t.status] || t.status,
+        stage: stageOf[t.status] || '',
+        type: '',
+        date: fmt(t.created_at),
+        pm: acctInfo[t.account_id]?.pm || '',
+        dev: t.assigned_to ? (empName[t.assigned_to] || '') : '',
+        resolved: t.resolved_at ? fmt(t.resolved_at) : undefined,
+        notes: [], files: [],
+      }));
+      setRows(out);
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
+
+  const devNames = [...new Set(rows.map(t => t.dev).filter(Boolean))];
+
+  const shown = rows.filter(t => {
     if (statusFilter !== 'all' && t.status !== statusFilter) return false;
     if (devFilter !== 'all' && t.dev !== devFilter) return false;
     return true;
   });
 
-  const openCount    = TICKETS_WITH_DATA.filter(t => t.status === 'open' || t.status === 'in-progress').length;
-  const resolvedCount = TICKETS_WITH_DATA.filter(t => t.status === 'resolved').length;
+  const openCount    = rows.filter(t => t.status === 'open' || t.status === 'in-progress').length;
+  const resolvedCount = rows.filter(t => t.status === 'resolved').length;
   const selStyle = { background:T.surface, border:`1px solid ${T.border}`, color:T.ink, padding:'6px 12px', ...fm, fontSize:11, cursor:'pointer' };
   const statusBtns = ['all','open','in-progress','resolved'];
 
@@ -1337,7 +1397,7 @@ function TicketsPage() {
           </div>
           <select value={devFilter} onChange={e => setDevFilter(e.target.value)} style={selStyle}>
             <option value="all">All Dev Members</option>
-            {DEV_MEMBERS.map(d => <option key={d.name} value={d.name}>{d.name}</option>)}
+            {devNames.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
           {(statusFilter !== 'all' || devFilter !== 'all') && (
             <button onClick={() => { setStatusFilter('all'); setDevFilter('all'); }} style={{ background:'none', border:`1px solid ${T.border}`, color:T.ink3, ...fm, fontSize:11, padding:'5px 12px', cursor:'pointer' }}>Clear</button>
@@ -1354,16 +1414,16 @@ function TicketsPage() {
       {/* BY DEV VIEW */}
       {view === 'bydev' && (
         <div>
-          {DEV_MEMBERS.map(dev => {
-            const devTickets = shown.filter(t => t.dev === dev.name);
+          {devNames.map(devName => {
+            const devTickets = shown.filter(t => t.dev === devName);
             const openDev = devTickets.filter(t => t.status === 'open' || t.status === 'in-progress').length;
+            const init = devName.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
             return (
-              <div key={dev.name} style={{ marginBottom:28 }}>
-                <div style={{ display:'flex', alignItems:'center', gap:12, padding:'14px 16px', background:T.surface, border:`1px solid ${T.border}`, borderTop:`3px solid ${dev.bg}`, marginBottom:10 }}>
-                  <div style={{ width:40, height:40, background:dev.bg, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Syne',sans-serif", fontSize:15, fontWeight:700, flexShrink:0 }}>{dev.av}</div>
+              <div key={devName} style={{ marginBottom:28 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:12, padding:'14px 16px', background:T.surface, border:`1px solid ${T.border}`, borderTop:`3px solid ${T.dark}`, marginBottom:10 }}>
+                  <div style={{ width:40, height:40, background:T.dark, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontFamily:"'Syne',sans-serif", fontSize:15, fontWeight:700, flexShrink:0 }}>{init}</div>
                   <div style={{ flex:1 }}>
-                    <div style={{ fontSize:15, fontWeight:700 }}>{dev.name}</div>
-                    <div style={{ ...fm, fontSize:10, color:T.ink3, marginTop:2 }}>{dev.specialty}</div>
+                    <div style={{ fontSize:15, fontWeight:700 }}>{devName}</div>
                   </div>
                   <div style={{ textAlign:'right' }}>
                     <div style={{ ...fd, fontSize:28, fontWeight:800, color: openDev > 0 ? T.red : T.green, lineHeight:1 }}>{openDev}</div>
@@ -1400,7 +1460,7 @@ function TicketsPage() {
             <div style={{ display:'flex', gap:12, minWidth:'max-content', alignItems:'flex-start' }}>
               {TKT_PIPELINE_STAGES.map(stage => {
                 const stageColor = TKT_STAGE_COLORS[stage];
-                const stageTickets = TICKETS_WITH_DATA.filter(t => {
+                const stageTickets = rows.filter(t => {
                   if (devFilter !== 'all' && t.dev !== devFilter) return false;
                   return t.stage === stage;
                 });
@@ -1809,12 +1869,12 @@ export default function App({ session, supabase }) {
             <div style={{ ...fm, fontSize:11, color:T.ink3 }}>LAVA Internal / <strong style={{ color:T.ink }}>{topTitle}</strong></div>
           </div>
           <div style={{ flex:1, padding:24 }}>
-            {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} />}
+            {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} supabase={supabase} />}
             {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
             {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
             {page === 'vaoverview'     && <VAOverviewPage />}
             {page === 'lavatrainers'   && <LAVATrainersPage />}
-            {page === 'tickets'        && <TicketsPage />}
+            {page === 'tickets'        && <TicketsPage supabase={supabase} />}
             {page === 'meetings'       && <MeetingsPage />}
             {page === 'comms'          && <CommsPage />}
             {page === 'docs'           && <DocsPage />}
