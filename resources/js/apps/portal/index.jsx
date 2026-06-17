@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { logActivity } from "../../lib/activity";
 
 // ─────────────────────────────────────────────
 //  THEME TOKENS
@@ -1485,39 +1486,71 @@ function TicketsPage({ supabase }) {
   );
 }
 
-function MeetingsPage() {
-  const [pending, setPending] = useState([
-    {id:1,title:'Phase Review — Acme Corp',contact:'Jane Smith',date:'Jun 3, 2026',time:'2:00 PM',duration:'60 min',notes:'Phase 3 status, lead routing delays, Phase 4 preview.',status:'pending'},
-    {id:2,title:'Issue Escalation — TechNova Inc',contact:'Rick Torres',date:'May 31, 2026',time:'10:00 AM',duration:'30 min',notes:'Automation trigger failures blocking sales pipeline.',status:'pending'},
-    {id:3,title:'Weekly Check-In — Blueridge Digital',contact:'Maria Chen',date:'Jun 2, 2026',time:'9:30 AM',duration:'30 min',notes:'Regular weekly sync.',status:'pending'},
-  ]);
-  const confirmed = [
-    {acct:'Meridian Group',type:'Strategy & Planning',date:'Jun 5',time:'1:00 PM',contact:'Alex W.',pm:'Victoria S.'},
-    {acct:'Skyline Ventures',type:'Phase Review',date:'Jun 6',time:'11:00 AM',contact:'Sam B.',pm:'Sam R.'},
-    {acct:'Coral Dynamics',type:'Onboarding Kickoff',date:'Jun 2',time:'10:00 AM',contact:'Lisa P.',pm:'Darek C.'},
-  ];
-  const handleMtg = (id, action) => setPending(prev => prev.map(m => m.id === id ? {...m, status:action} : m));
+function MeetingsPage({ session, supabase }) {
+  const me = session?.employee || null;
+  const [meetings, setMeetings] = useState([]);
+  const fmt = (x) => x ? new Date(x).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [mRes, accRes, empRes] = await Promise.all([
+        supabase.from('meetings').select('meeting_id,account_id,type,title,status,meeting_date,meeting_time,scheduled_minutes,contact,notes').order('meeting_date', { ascending: true }),
+        supabase.from('accounts').select('account_id,pm_id,hubspot_company_id'),
+        supabase.from('employees').select('id,name'),
+      ]);
+      if (!alive) return;
+      const empName = Object.fromEntries((empRes.data || []).map(e => [e.id, e.name]));
+      const compIds = [...new Set((accRes.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
+      let compName = {};
+      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
+      const acctInfo = Object.fromEntries((accRes.data || []).map(a => [a.account_id, { name: compName[a.hubspot_company_id] || '—', pm: empName[a.pm_id] || '' }]));
+      setMeetings((mRes.data || []).map(m => ({
+        id: m.meeting_id,
+        title: m.title || m.type || 'Meeting',
+        type: m.type || '',
+        acct: acctInfo[m.account_id]?.name || '—',
+        pm: acctInfo[m.account_id]?.pm || '',
+        contact: m.contact || '',
+        date: fmt(m.meeting_date),
+        time: m.meeting_time || '',
+        duration: m.scheduled_minutes ? `${m.scheduled_minutes} min` : '',
+        notes: m.notes || '',
+        status: m.status || 'pending',
+      })));
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
+
+  const pending = meetings.filter(m => m.status === 'pending' || m.status === 'scheduled');
+  const confirmed = meetings.filter(m => m.status === 'confirmed');
+
+  async function handleMtg(id, action) {
+    const status = action === 'confirmed' ? 'confirmed' : 'declined';
+    const { error } = await supabase.from('meetings').update({ status }).eq('meeting_id', id);
+    if (error) return;
+    const m = meetings.find(x => x.id === id);
+    await logActivity({ app: 'portal', actor: me, action: `portal.meeting.${status}`, entityType: 'meeting', entityId: id, details: { title: m?.title } });
+    setMeetings(prev => prev.map(x => x.id === id ? { ...x, status } : x));
+  }
 
   return (
     <div className="page-enter">
-      <div style={{ marginBottom:22 }}><h2 style={{ ...fd, fontSize:28, fontWeight:800 }}>Meeting Requests</h2><p style={{ ...fm, fontSize:11, color:T.ink3, marginTop:3 }}>3 pending · 8 scheduled this month</p></div>
+      <div style={{ marginBottom:22 }}><h2 style={{ ...fd, fontSize:28, fontWeight:800 }}>Meeting Requests</h2><p style={{ ...fm, fontSize:11, color:T.ink3, marginTop:3 }}>{pending.length} pending · {confirmed.length} confirmed</p></div>
       <div style={{ background:T.surface, border:`1px solid ${T.border}`, padding:18, marginBottom:14 }}>
         <div style={{ ...fm, fontSize:10, letterSpacing:3, textTransform:'uppercase', color:T.ink3, marginBottom:12 }}>Pending Confirmation</div>
+        {pending.length === 0 && <div style={{ ...fm, fontSize:12, color:T.ink3 }}>No pending meeting requests.</div>}
         {pending.map(m => (
-          <div key={m.id} style={{ background:T.surface2, border:`1px solid ${T.border}`, borderLeft: m.status==='confirmed'?`3px solid ${T.green}`:m.status==='declined'?`3px solid ${T.border2}`:`3px solid ${T.border2}`, padding:14, marginBottom:8, opacity:m.status==='declined'?0.35:1 }}>
+          <div key={m.id} style={{ background:T.surface2, border:`1px solid ${T.border}`, borderLeft:`3px solid ${T.border2}`, padding:14, marginBottom:8 }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexWrap:'wrap', gap:8 }}>
               <div>
                 <div style={{ fontSize:13, fontWeight:600, marginBottom:3 }}>{m.title}</div>
-                <div style={{ ...fm, fontSize:11, color:T.ink3 }}>{m.contact} · {m.date} · {m.time} · {m.duration}</div>
-                <div style={{ fontSize:12, color:T.ink2, marginTop:5 }}>{m.notes}</div>
+                <div style={{ ...fm, fontSize:11, color:T.ink3 }}>{[m.contact, m.date, m.time, m.duration].filter(Boolean).join(' · ')}</div>
+                {m.notes && <div style={{ fontSize:12, color:T.ink2, marginTop:5 }}>{m.notes}</div>}
               </div>
-              {m.status === 'pending' && (
-                <div style={{ display:'flex', gap:6 }}>
-                  <button onClick={() => handleMtg(m.id,'confirmed')} style={{ background:T.lava, color:'#fff', border:'none', padding:'6px 12px', ...fd, fontSize:11, fontWeight:700, cursor:'pointer' }}>Confirm</button>
-                  <button onClick={() => handleMtg(m.id,'declined')} style={{ background:'none', border:`1px solid ${T.border}`, color:T.ink2, ...fm, fontSize:11, padding:'6px 12px', cursor:'pointer' }}>Decline</button>
-                </div>
-              )}
-              {m.status === 'confirmed' && <span style={{ ...fm, fontSize:11, color:T.green }}>✓ Confirmed</span>}
+              <div style={{ display:'flex', gap:6 }}>
+                <button onClick={() => handleMtg(m.id,'confirmed')} style={{ background:T.lava, color:'#fff', border:'none', padding:'6px 12px', ...fd, fontSize:11, fontWeight:700, cursor:'pointer' }}>Confirm</button>
+                <button onClick={() => handleMtg(m.id,'declined')} style={{ background:'none', border:`1px solid ${T.border}`, color:T.ink2, ...fm, fontSize:11, padding:'6px 12px', cursor:'pointer' }}>Decline</button>
+              </div>
             </div>
           </div>
         ))}
@@ -1525,7 +1558,8 @@ function MeetingsPage() {
       <div style={{ background:T.surface, border:`1px solid ${T.border}`, padding:18 }}>
         <div style={{ ...fm, fontSize:10, letterSpacing:3, textTransform:'uppercase', color:T.ink3, marginBottom:12 }}>Confirmed Upcoming</div>
         <table className="tbl"><thead><tr><th>Account</th><th>Type</th><th>Date & Time</th><th>Requestor</th><th>PM</th><th>Status</th></tr></thead>
-        <tbody>{confirmed.map((c,i) => <tr key={i}><td>{c.acct}</td><td>{c.type}</td><td style={{...fm,fontSize:12}}>{c.date} · {c.time}</td><td>{c.contact}</td><td>{c.pm}</td><td><Pill type="pg">Confirmed</Pill></td></tr>)}</tbody></table>
+        <tbody>{confirmed.map((c) => <tr key={c.id}><td>{c.acct}</td><td>{c.type}</td><td style={{...fm,fontSize:12}}>{[c.date, c.time].filter(Boolean).join(' · ')}</td><td>{c.contact}</td><td>{c.pm}</td><td><Pill type="pg">Confirmed</Pill></td></tr>)}</tbody></table>
+        {confirmed.length === 0 && <div style={{ ...fm, fontSize:12, color:T.ink3, marginTop:8 }}>No confirmed meetings.</div>}
       </div>
     </div>
   );
@@ -1960,7 +1994,7 @@ export default function App({ session, supabase }) {
             {page === 'vaoverview'     && <VAOverviewPage supabase={supabase} />}
             {page === 'lavatrainers'   && <LAVATrainersPage supabase={supabase} />}
             {page === 'tickets'        && <TicketsPage supabase={supabase} />}
-            {page === 'meetings'       && <MeetingsPage />}
+            {page === 'meetings'       && <MeetingsPage session={session} supabase={supabase} />}
             {page === 'comms'          && <CommsPage />}
             {page === 'docs'           && <DocsPage />}
             {page === 'incident'       && <ComingSoonPage title="Incident / Postmortem" icon="🚨" desc="Log and track incidents, outages, and post-mortem reviews." />}
