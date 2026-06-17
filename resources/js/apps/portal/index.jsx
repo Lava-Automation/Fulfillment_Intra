@@ -1626,12 +1626,53 @@ function DocsPage() {
   );
 }
 
-const TrainersContent = () => {
+function TrainersContent({ supabase }) {
+  const [trainers, setTrainers] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const init = (n) => (n || '?').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+      const colors = ['#1A5FAA', '#6A3A9A', '#1D7A4F', '#8B4513', '#145365', '#AA4A1A'];
+      const pick = (n) => colors[(n || '?').charCodeAt(0) % colors.length];
+      const [vasRes, empRes, accRes, trRes, tsRes] = await Promise.all([
+        supabase.from('vas').select('employee_id,account_id,title,status,mods_done,mods_total,dev_trainer_id,ins_trainer_id'),
+        supabase.from('employees').select('id,name,position,email'),
+        supabase.from('accounts').select('account_id,hubspot_company_id'),
+        supabase.from('trainers').select('employee_id,specialty,capacity'),
+        supabase.from('training_sessions').select('trainer_id'),
+      ]);
+      if (!alive) return;
+      const emp = Object.fromEntries((empRes.data || []).map(e => [e.id, e]));
+      const trMeta = Object.fromEntries((trRes.data || []).map(t => [t.employee_id, t]));
+      const compIds = [...new Set((accRes.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
+      let compName = {};
+      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
+      const acctComp = Object.fromEntries((accRes.data || []).map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
+      const vlist = vasRes.data || [];
+      const ids = new Set((trRes.data || []).map(t => t.employee_id));
+      vlist.forEach(v => { if (v.dev_trainer_id) ids.add(v.dev_trainer_id); if (v.ins_trainer_id) ids.add(v.ins_trainer_id); });
+      const rows = [...ids].map(id => {
+        const name = emp[id]?.name || 'Unknown';
+        const assignedVAs = vlist.filter(v => v.dev_trainer_id === id || v.ins_trainer_id === id).map(v => ({
+          id: v.employee_id, av: init(emp[v.employee_id]?.name), bg: pick(emp[v.employee_id]?.name || '?'),
+          name: emp[v.employee_id]?.name || 'Unknown', title: v.title || 'VA',
+          account: v.account_id ? (acctComp[v.account_id] || '—') : '—',
+          status: v.status || 'onboarding', modsDone: v.mods_done ?? 0, modsTotal: v.mods_total ?? 0,
+        }));
+        const capacity = trMeta[id]?.capacity ?? 0;
+        const assigned = assignedVAs.length;
+        const workload = capacity ? Math.min(100, Math.round((assigned / capacity) * 100)) : 0;
+        return { id, av: init(name), bg: pick(name), name, title: emp[id]?.position || 'Trainer', email: emp[id]?.email || '', specialty: trMeta[id]?.specialty || '', capacity, assigned, workload, assignedVAs };
+      });
+      setTrainers(rows);
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
   const wC = (w) => w>=90?T.red:w>=60?'#D4A017':T.green;
   const wL = (w) => w>=90?'At Capacity':w>=60?'Moderate':'Available';
-  const mC = (done,tot) => done===tot?T.green:done>=5?'#D4A017':T.red;
-  return TRAINERS.map(t => {
-        const assignedVAs = VA_PROFILES.filter(v => t.vas.includes(v.id));
+  const mC = (done,tot) => tot && done===tot?T.green:done>=5?'#D4A017':T.red;
+  return trainers.map(t => {
+        const assignedVAs = t.assignedVAs;
         return (
           <div key={t.name} style={{ background:T.surface2, border:`1px solid ${T.border}`, marginBottom:18 }}>
             <div style={{ padding:'18px 20px', borderBottom:`2px solid ${T.border}`, display:'flex', alignItems:'center', gap:14, flexWrap:'wrap' }}>
@@ -1654,7 +1695,7 @@ const TrainersContent = () => {
             <div style={{ padding:'10px 16px 6px', ...fm, fontSize:9, letterSpacing:3, textTransform:'uppercase', color:T.ink3 }}>Assigned VAs</div>
             {assignedVAs.map(v => {
               const mc = mC(v.modsDone, v.modsTotal);
-              const modPct = Math.round((v.modsDone/v.modsTotal)*100);
+              const modPct = v.modsTotal ? Math.round((v.modsDone/v.modsTotal)*100) : 0;
               const sc = v.status==='active'?'pg':v.status==='training'?'py':'pb';
               return (
                 <div key={v.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px', borderBottom:`1px solid ${T.border}`, background:T.surface }}>
@@ -1678,9 +1719,53 @@ const TrainersContent = () => {
       });
 };
 
-function VAOverviewPage() {
+function VAOverviewPage({ supabase }) {
   const [vaFilter, setVaFilter] = useState('all');
-  const filteredVAs = vaFilter === 'all' ? VA_PROFILES : VA_PROFILES.filter(v => v.status === vaFilter);
+  const [vas, setVas] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const fmt = (x) => x ? new Date(x).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      const init = (n) => (n || '?').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+      const colors = ['#1A5FAA', '#6A3A9A', '#1D7A4F', '#8B4513', '#145365', '#AA4A1A', '#2A7A4F', '#B07D10'];
+      const pick = (n) => colors[(n || '?').charCodeAt(0) % colors.length];
+      const [vasRes, empRes, accRes] = await Promise.all([
+        supabase.from('vas').select('employee_id,account_id,title,status,started_at,dev_trainer_id,ins_trainer_id,task_comp,tasks_run,mods_done,mods_total,bio,skills,issues'),
+        supabase.from('employees').select('id,name,position'),
+        supabase.from('accounts').select('account_id,hubspot_company_id'),
+      ]);
+      if (!alive) return;
+      const emp = Object.fromEntries((empRes.data || []).map(e => [e.id, e]));
+      const compIds = [...new Set((accRes.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
+      let compName = {};
+      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
+      const acctComp = Object.fromEntries((accRes.data || []).map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
+      const rows = (vasRes.data || []).map(v => {
+        const name = emp[v.employee_id]?.name || 'Unknown';
+        const trainerId = v.dev_trainer_id || v.ins_trainer_id;
+        return {
+          id: v.employee_id,
+          av: init(name), bg: pick(name),
+          name,
+          title: v.title || emp[v.employee_id]?.position || 'VA',
+          status: v.status || 'onboarding',
+          account: v.account_id ? (acctComp[v.account_id] || '—') : '—',
+          trainer: trainerId ? (emp[trainerId]?.name || '—') : '—',
+          startDate: fmt(v.started_at),
+          taskComp: v.task_comp ?? 0,
+          tasksRun: v.tasks_run ?? 0,
+          modsDone: v.mods_done ?? 0,
+          modsTotal: v.mods_total ?? 0,
+          bio: v.bio || '',
+          skills: v.skills || [],
+          issues: v.issues || [],
+        };
+      });
+      setVas(rows);
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
+  const filteredVAs = vaFilter === 'all' ? vas : vas.filter(v => v.status === vaFilter);
   return (
     <div className="page-enter">
       <div style={{ marginBottom:22 }}><h2 style={{ ...fd, fontSize:28, fontWeight:800 }}>VA Overview</h2><p style={{ ...fm, fontSize:11, color:T.ink3, marginTop:3 }}>VA profiles across all accounts</p></div>
@@ -1693,7 +1778,7 @@ function VAOverviewPage() {
           <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))', gap:14 }}>
             {filteredVAs.map(v => {
               const sc = v.status==='active'?'pg':v.status==='training'?'py':'pb';
-              const modPct = Math.round((v.modsDone/v.modsTotal)*100);
+              const modPct = v.modsTotal ? Math.round((v.modsDone/v.modsTotal)*100) : 0;
               const mc = v.modsDone===v.modsTotal?T.green:v.modsDone>=5?'#D4A017':T.red;
               const tc = v.taskComp>=90?T.green:v.taskComp>=70?'#D4A017':T.red;
               return (
@@ -1750,11 +1835,11 @@ function VAOverviewPage() {
   );
 }
 
-function LAVATrainersPage() {
+function LAVATrainersPage({ supabase }) {
   return (
     <div className="page-enter">
       <div style={{ marginBottom:22 }}><h2 style={{ ...fd, fontSize:28, fontWeight:800 }}>LAVA Trainers</h2><p style={{ ...fm, fontSize:11, color:T.ink3, marginTop:3 }}>Trainer workloads and assigned VAs</p></div>
-      <TrainersContent />
+      <TrainersContent supabase={supabase} />
     </div>
   );
 }
@@ -1872,8 +1957,8 @@ export default function App({ session, supabase }) {
             {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} supabase={supabase} />}
             {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
             {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
-            {page === 'vaoverview'     && <VAOverviewPage />}
-            {page === 'lavatrainers'   && <LAVATrainersPage />}
+            {page === 'vaoverview'     && <VAOverviewPage supabase={supabase} />}
+            {page === 'lavatrainers'   && <LAVATrainersPage supabase={supabase} />}
             {page === 'tickets'        && <TicketsPage supabase={supabase} />}
             {page === 'meetings'       && <MeetingsPage />}
             {page === 'comms'          && <CommsPage />}
