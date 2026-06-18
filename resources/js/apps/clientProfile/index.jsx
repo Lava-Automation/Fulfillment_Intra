@@ -422,19 +422,72 @@ function PeopleTab({ d, onAssignVA, onRemoveVA, onAssignTeam, onRemoveTeam }) {
   );
 }
 
-function TechStackTab({ d }) {
+function TechStackTab({ d, onToggleTool, onAddCatalog, onBulkAdd, onRemoveCatalog }) {
+  const [newTech, setNewTech] = useState("");
+  const [bulk, setBulk] = useState("");
+  const [showBulk, setShowBulk] = useState(false);
+
+  const selected = new Set(d.account.tech_tools || []);
+  const catalog = [...d.catalog].sort((a, b) => a.name.localeCompare(b.name));
+  const inputStyle = { border: `1px solid ${N.line}`, borderRadius: 8, padding: "8px 11px", fontFamily: FONT_BODY, fontSize: 13, color: B.black, outline: "none", background: B.white };
+  const btn = (bg, fg) => ({ background: bg, color: fg, border: "none", borderRadius: 8, padding: "8px 14px", fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 600, cursor: "pointer" });
+
   return (
-    <Card>
-      <SectionHeading icon={Wrench}>Tech stack</SectionHeading>
-      <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 12 }}>The agency software selected for this account. Adding, removing, and the shared catalog are coming in a later pass.</div>
-      {(d.account.tech_tools && d.account.tech_tools.length) ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
-          {d.account.tech_tools.map((t) => (
-            <span key={t} style={{ fontSize: 13, color: B.darkBlue, background: N.fill, border: `1px solid ${N.line}`, padding: "6px 12px", borderRadius: 8 }}>{t}</span>
-          ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <Card>
+        <SectionHeading icon={Wrench}>This account's tech stack</SectionHeading>
+        <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 12 }}>The software selected for this account. Click a catalog item below to add or remove it.</div>
+        {selected.size ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
+            {[...selected].map((t) => (
+              <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: B.white, background: B.darkBlue, padding: "6px 8px 6px 12px", borderRadius: 8 }}>
+                {t}
+                <button onClick={() => onToggleTool(t)} title="Remove" style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.7)", padding: 0, display: "flex" }}><X size={13} /></button>
+              </span>
+            ))}
+          </div>
+        ) : <Empty>No tech selected yet. Pick from the catalog below.</Empty>}
+      </Card>
+
+      <Card>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+          <SectionHeading icon={Wrench}>Catalog</SectionHeading>
+          <button onClick={() => setShowBulk((s) => !s)} style={{ marginLeft: "auto", ...btn("transparent", B.darkBlue), border: `1px solid ${N.line}` }}>{showBulk ? "Close bulk add" : "Bulk add"}</button>
         </div>
-      ) : <Empty>No tech tools selected yet.</Empty>}
-    </Card>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+          <input value={newTech} onChange={(e) => setNewTech(e.target.value)} placeholder="Add a tool to the catalog…" style={{ ...inputStyle, flex: 1, minWidth: 200 }}
+            onKeyDown={(e) => { if (e.key === "Enter") { onAddCatalog(newTech); setNewTech(""); } }} />
+          <button onClick={() => { onAddCatalog(newTech); setNewTech(""); }} style={btn(B.red, B.white)}><Plus size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Add</button>
+        </div>
+
+        {showBulk && (
+          <div style={{ marginBottom: 16, padding: 14, background: N.fill, borderRadius: 10 }}>
+            <div style={{ fontSize: 12, color: N.muted, marginBottom: 8 }}>Paste a list, one tool per line (or comma separated). Existing names are skipped.</div>
+            <textarea value={bulk} onChange={(e) => setBulk(e.target.value)} placeholder={"AgencyZoom\nHawkSoft AMS\nRingCentral"} style={{ ...inputStyle, width: "100%", boxSizing: "border-box", height: 100, resize: "none", lineHeight: 1.5 }} />
+            <div style={{ marginTop: 10 }}>
+              <button onClick={() => { onBulkAdd(bulk); setBulk(""); setShowBulk(false); }} style={btn(B.darkBlue, B.white)}>Add list to catalog</button>
+            </div>
+          </div>
+        )}
+
+        {catalog.length ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
+            {catalog.map((c) => {
+              const on = selected.has(c.name);
+              return (
+                <span key={c.tech_id} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: on ? B.white : B.darkBlue, background: on ? B.teal : N.fill, border: `1px solid ${on ? B.teal : N.line}`, padding: "6px 8px 6px 12px", borderRadius: 8 }}>
+                  <button onClick={() => onToggleTool(c.name)} title={on ? "Remove from this account" : "Add to this account"} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", padding: 0, font: "inherit", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    {on && <Check size={12} strokeWidth={3} />}{c.name}
+                  </button>
+                  <button onClick={() => onRemoveCatalog(c.tech_id, c.name)} title="Delete from catalog" style={{ background: "none", border: "none", cursor: "pointer", color: on ? "rgba(255,255,255,0.7)" : N.faint, padding: 0, display: "flex" }}><X size={13} /></button>
+                </span>
+              );
+            })}
+          </div>
+        ) : <Empty>The catalog is empty. Add tools above.</Empty>}
+      </Card>
+    </div>
   );
 }
 
@@ -477,7 +530,7 @@ function Profile({ supabase, session, accountId, onBack }) {
     if (aErr) { setError(aErr.message); return; }
     if (!account) { setError("Account not found."); return; }
 
-    const [cRes, eRes, vRes, mRes, gRes, pRes, aiRes, tRes, teamRes] = await Promise.all([
+    const [cRes, eRes, vRes, mRes, gRes, pRes, aiRes, tRes, teamRes, catRes] = await Promise.all([
       account.hubspot_company_id ? supabase.from("hubspot_companies").select("name").eq("id", account.hubspot_company_id).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from("employees").select("id,name"),
       supabase.from("vas").select("employee_id,account_id,title,status"), // full roster; assigned set derived below
@@ -487,6 +540,7 @@ function Profile({ supabase, session, accountId, onBack }) {
       supabase.from("action_items").select("action_item_id,body,owner_id,due_date,status").eq("account_id", accountId).order("due_date", { ascending: true }),
       supabase.from("timeline_events").select("timeline_event_id,event_date,label,detail,color").eq("account_id", accountId).order("event_date", { ascending: false }),
       supabase.from("account_team").select("employee_id,role_group").eq("account_id", accountId),
+      supabase.from("tech_stack").select("tech_id,name,category").order("name", { ascending: true }),
     ]);
 
     const emps = eRes.data || [];
@@ -508,6 +562,7 @@ function Profile({ supabase, session, accountId, onBack }) {
       projects: pRes.data || [],
       actionItems: aiRes.data || [],
       timeline: tRes.data || [],
+      catalog: catRes.data || [],
     });
   }, [supabase, accountId]);
 
@@ -539,6 +594,42 @@ function Profile({ supabase, session, accountId, onBack }) {
     load();
   }
 
+  // -- Tech stack: per-account selection in accounts.tech_tools; shared catalog --
+  async function toggleTool(name) {
+    const cur = d.account.tech_tools || [];
+    const has = cur.includes(name);
+    const next = has ? cur.filter((t) => t !== name) : [...cur, name];
+    const { error: e } = await supabase.from("accounts").update({ tech_tools: next }).eq("account_id", accountId);
+    if (e) { alert("Could not update tech tools: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: has ? "clientprofile.techstack.removed" : "clientprofile.techstack.added", entityType: "account", entityId: accountId, details: { tool: name } });
+    load();
+  }
+  async function addCatalog(name) {
+    const n = (name || "").trim();
+    if (!n) return;
+    if (d.catalog.some((c) => c.name.toLowerCase() === n.toLowerCase())) { alert(`"${n}" is already in the catalog.`); return; }
+    const { error: e } = await supabase.from("tech_stack").insert({ name: n });
+    if (e) { alert("Could not add to catalog: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.tech.catalog_added", entityType: "tech_stack", entityId: n, details: { name: n } });
+    load();
+  }
+  async function bulkAddCatalog(text) {
+    const existing = new Set(d.catalog.map((c) => c.name.toLowerCase()));
+    const names = [...new Set((text || "").split(/[\n,]/).map((s) => s.trim()).filter(Boolean))]
+      .filter((n) => !existing.has(n.toLowerCase()));
+    if (!names.length) { alert("Nothing new to add."); return; }
+    const { error: e } = await supabase.from("tech_stack").insert(names.map((name) => ({ name })));
+    if (e) { alert("Could not bulk add: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.tech.catalog_bulk_added", entityType: "tech_stack", entityId: accountId, details: { count: names.length } });
+    load();
+  }
+  async function removeCatalog(techId, name) {
+    const { error: e } = await supabase.from("tech_stack").delete().eq("tech_id", techId);
+    if (e) { alert("Could not remove from catalog: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.tech.catalog_removed", entityType: "tech_stack", entityId: name, details: { name } });
+    load();
+  }
+
   if (error) return <div style={{ padding: 28, color: B.red, fontFamily: FONT_BODY }}>Error: {error}</div>;
   if (!d) return <div style={{ padding: 28, color: N.muted, fontFamily: FONT_BODY }}>Loading profile…</div>;
 
@@ -552,7 +643,7 @@ function Profile({ supabase, session, accountId, onBack }) {
         {tab === "Reporting" && <ComingSoon title="Reporting" body="Agency reporting (leads, pipelines, premium, producers, reviews) is a separate app that will tie in here later. It pulls from the agency CRM, not the spine." />}
         {tab === "Meetings" && <MeetingsTab d={d} />}
         {tab === "People" && <PeopleTab d={d} onAssignVA={assignVA} onRemoveVA={removeVA} onAssignTeam={assignTeam} onRemoveTeam={removeTeam} />}
-        {tab === "Tech stack" && <TechStackTab d={d} />}
+        {tab === "Tech stack" && <TechStackTab d={d} onToggleTool={toggleTool} onAddCatalog={addCatalog} onBulkAdd={bulkAddCatalog} onRemoveCatalog={removeCatalog} />}
         {tab === "Timeline" && <TimelineTab d={d} />}
       </div>
     </>
