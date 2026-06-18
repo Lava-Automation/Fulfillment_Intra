@@ -21,7 +21,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search, Plus, X, Clock, AlertCircle, CheckCircle2, PauseCircle,
-  Sun, Moon, ChevronRight, Circle
+  ChevronRight, Circle
 } from 'lucide-react';
 import { logActivity } from '../../lib/activity';
 
@@ -30,9 +30,10 @@ const RED = '#e73835';
 const RED_HOVER = '#c0302e';
 const DARK_BLUE = '#24242d';
 const TEAL = '#145365';
-const TEAL_LIGHT = '#1d7187';
 const BLACK = '#1B120B';
 
+// Single light theme. The original had a dark variant behind a toggle; the
+// toggle was removed, so only the light palette remains.
 const THEMES = {
   light: {
     red: RED, redHover: RED_HOVER, redDim: 'rgba(231, 56, 53, 0.09)', redLine: 'rgba(231, 56, 53, 0.32)',
@@ -43,16 +44,6 @@ const THEMES = {
     text: BLACK, textMid: 'rgba(27, 18, 11, 0.62)', textDim: 'rgba(27, 18, 11, 0.42)', textFaint: 'rgba(27, 18, 11, 0.26)',
     trackBg: 'rgba(36, 36, 45, 0.08)', avatarBg: 'rgba(20, 83, 101, 0.07)',
     structFill: DARK_BLUE, onStruct: '#ffffff', onStructDim: 'rgba(255,255,255,0.58)', overlay: 'rgba(27, 18, 11, 0.30)',
-  },
-  dark: {
-    red: RED, redHover: RED_HOVER, redDim: 'rgba(231, 56, 53, 0.16)', redLine: 'rgba(231, 56, 53, 0.42)',
-    darkBlue: DARK_BLUE,
-    teal: TEAL_LIGHT, tealText: '#5fc7dd', tealDim: 'rgba(29, 113, 135, 0.20)', tealLine: 'rgba(95, 199, 221, 0.34)',
-    bg: '#15161b', surface: '#1e2028', surfaceHover: '#252834',
-    border: 'rgba(255, 255, 255, 0.08)', borderStrong: 'rgba(255, 255, 255, 0.16)',
-    text: '#f4f3f1', textMid: 'rgba(244, 243, 241, 0.68)', textDim: 'rgba(244, 243, 241, 0.46)', textFaint: 'rgba(244, 243, 241, 0.28)',
-    trackBg: 'rgba(255, 255, 255, 0.08)', avatarBg: 'rgba(95, 199, 221, 0.10)',
-    structFill: '#1b1c22', onStruct: '#f4f3f1', onStructDim: 'rgba(244, 243, 241, 0.55)', overlay: 'rgba(0, 0, 0, 0.58)',
   },
 };
 
@@ -217,7 +208,7 @@ function LavaMark({ size = 20 }) {
 }
 
 // -- Header --------------------------------------------------------
-function Header({ T, theme, onToggleTheme, query, setQuery, me }) {
+function Header({ T, query, setQuery, me }) {
   return (
     <div style={{ background: T.structFill }}>
       <div style={{
@@ -255,21 +246,6 @@ function Header({ T, theme, onToggleTheme, query, setQuery, me }) {
               }}
             />
           </div>
-
-          <button
-            onClick={onToggleTheme}
-            title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-            style={{
-              width: 38, height: 38, borderRadius: 999, cursor: 'pointer',
-              background: 'rgba(255,255,255,0.07)', border: `1px solid rgba(255,255,255,0.12)`,
-              color: T.onStructDim, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'background 120ms, color 120ms',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.color = T.onStruct; e.currentTarget.style.background = 'rgba(255,255,255,0.12)'; }}
-            onMouseLeave={e => { e.currentTarget.style.color = T.onStructDim; e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
-          >
-            {theme === 'light' ? <Moon size={16} strokeWidth={2} /> : <Sun size={16} strokeWidth={2} />}
-          </button>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{
@@ -664,6 +640,105 @@ function DetailDrawer({ ticket, now, onClose, onAssign, onStatusChange, T, team,
   );
 }
 
+// -- New ticket modal ----------------------------------------------
+function NewTicketModal({ T, accounts, team, onClose, onSubmit }) {
+  const [f, setF] = useState({ title: '', description: '', account_id: '', priority: 'M', assigned_to: '' });
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const labelStyle = {
+    fontFamily: FONTS.body, fontSize: 10.5, letterSpacing: '0.1em', textTransform: 'uppercase',
+    color: T.textDim, fontWeight: 600, display: 'block', marginBottom: 7,
+  };
+  const fieldStyle = {
+    width: '100%', boxSizing: 'border-box', background: T.bg, border: `1px solid ${T.border}`,
+    borderRadius: 10, padding: '10px 12px', fontFamily: FONTS.body, fontSize: 13, color: T.text, outline: 'none',
+  };
+
+  const submit = () => {
+    if (!f.title.trim()) { alert('A summary is required.'); return; }
+    onSubmit(f);
+  };
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: T.overlay, zIndex: 20 }} />
+      <div style={{
+        position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+        width: 'min(540px, calc(100vw - 32px))', maxHeight: '88vh', overflowY: 'auto', zIndex: 21,
+        background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16,
+        boxShadow: `0 24px 64px ${T.overlay}`,
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '20px 24px 16px', borderBottom: `1px solid ${T.border}`,
+        }}>
+          <span style={{ fontFamily: FONTS.display, fontSize: 15, letterSpacing: '0.06em', color: T.text, textTransform: 'uppercase' }}>New Ticket</span>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: T.textMid, padding: 4, display: 'flex' }}>
+            <X size={18} strokeWidth={2} />
+          </button>
+        </div>
+
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div>
+            <label style={labelStyle}>Summary *</label>
+            <input style={fieldStyle} value={f.title} onChange={e => set('title', e.target.value)} placeholder="Short description of the issue" />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={labelStyle}>Client</label>
+              <select style={fieldStyle} value={f.account_id} onChange={e => set('account_id', e.target.value)}>
+                <option value="">— None —</option>
+                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Priority</label>
+              <select style={fieldStyle} value={f.priority} onChange={e => set('priority', e.target.value)}>
+                <option value="H">High</option>
+                <option value="M">Medium</option>
+                <option value="L">Low</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Assign to</label>
+            <select style={fieldStyle} value={f.assigned_to} onChange={e => set('assigned_to', e.target.value)}>
+              <option value="">— Unassigned —</option>
+              {team.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Description</label>
+            <textarea style={{ ...fieldStyle, resize: 'none', height: 110, lineHeight: 1.6 }} value={f.description} onChange={e => set('description', e.target.value)} placeholder="What is happening, and any detail that helps whoever picks it up." />
+          </div>
+        </div>
+
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10,
+          padding: '14px 24px', borderTop: `1px solid ${T.border}`,
+        }}>
+          <button onClick={onClose} style={{
+            background: 'transparent', border: `1px solid ${T.borderStrong}`, color: T.text,
+            fontFamily: FONTS.body, fontSize: 12.5, fontWeight: 500, padding: '9px 16px', borderRadius: 999, cursor: 'pointer',
+          }}>Cancel</button>
+          <button onClick={submit}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 7, background: T.red, border: 'none', color: '#fff',
+              fontFamily: FONTS.body, fontWeight: 600, fontSize: 12.5, padding: '10px 18px', borderRadius: 999, cursor: 'pointer',
+              transition: 'background 120ms',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = T.redHover; }}
+            onMouseLeave={e => { e.currentTarget.style.background = T.red; }}
+          ><Plus size={15} strokeWidth={2.5} /> Create Ticket</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // -- App -----------------------------------------------------------
 export default function DevSupportQueue({ session, supabase }) {
   const me = session?.employee;
@@ -671,16 +746,17 @@ export default function DevSupportQueue({ session, supabase }) {
   const [tickets, setTickets] = useState([]);
   const [empName, setEmpName] = useState({}); // id -> name (all employees, for display)
   const [team, setTeam] = useState([]);       // [{id,name,role}] assignable support roster
+  const [accounts, setAccounts] = useState([]); // [{id,name}] for the New Ticket client picker
   const [loading, setLoading] = useState(true);
 
   const [selectedId, setSelectedId] = useState(null);
+  const [showNew, setShowNew] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [now, setNow] = useState(Date.now());
-  const [theme, setTheme] = useState('light');
 
-  const T = THEMES[theme];
+  const T = THEMES.light;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -719,8 +795,14 @@ export default function DevSupportQueue({ session, supabase }) {
       .filter(e => /dev support|qa\/?qc/i.test(e.position || ''))
       .map(e => ({ id: e.id, name: e.name, role: e.position }));
 
+    const acctList = accs
+      .map(a => ({ id: a.account_id, name: acctName[a.account_id] }))
+      .filter(o => o.name && o.name !== '—')
+      .sort((x, y) => x.name.localeCompare(y.name));
+
     setEmpName(emp);
     setTeam(teamList);
+    setAccounts(acctList);
     setTickets(rows);
     setLoading(false);
   }, [supabase]);
@@ -789,6 +871,26 @@ export default function DevSupportQueue({ session, supabase }) {
     });
   }
 
+  // CREATE: insert a new ticket (status opens at 'open') + log the open.
+  async function handleNew(form) {
+    const insert = {
+      title: form.title.trim(),
+      description: form.description.trim() || null,
+      account_id: form.account_id || null,
+      priority: form.priority,
+      status: 'open',
+      assigned_to: form.assigned_to || null,
+    };
+    const { data, error } = await supabase.from('tickets').insert(insert).select('ticket_id').maybeSingle();
+    if (error) { alert('Could not create ticket: ' + error.message); return; }
+    await logActivity({
+      app: 'devsupport', actor: me, action: 'devsupport.ticket.opened',
+      entityType: 'ticket', entityId: data?.ticket_id, details: { title: insert.title, priority: insert.priority },
+    });
+    setShowNew(false);
+    load();
+  }
+
   return (
     <div style={{
       minHeight: '100vh', background: T.bg, fontFamily: FONTS.body, color: T.text,
@@ -805,12 +907,12 @@ export default function DevSupportQueue({ session, supabase }) {
         ::-webkit-scrollbar-thumb:hover { background: ${T.borderStrong}; }
       `}</style>
 
-      <Header T={T} theme={theme} onToggleTheme={() => setTheme(p => p === 'light' ? 'dark' : 'light')} query={query} setQuery={setQuery} me={me} />
+      <Header T={T} query={query} setQuery={setQuery} me={me} />
       <StatStrip tickets={tickets} now={now} T={T} />
       <FilterRow
         priorityFilter={priorityFilter} setPriorityFilter={setPriorityFilter}
         assigneeFilter={assigneeFilter} setAssigneeFilter={setAssigneeFilter}
-        onNew={() => {}} T={T}
+        onNew={() => setShowNew(true)} T={T}
       />
 
       <div style={{
@@ -845,6 +947,10 @@ export default function DevSupportQueue({ session, supabase }) {
             T={T} team={team} empName={empName} supabase={supabase}
           />
         </>
+      )}
+
+      {showNew && (
+        <NewTicketModal T={T} accounts={accounts} team={team} onClose={() => setShowNew(false)} onSubmit={handleNew} />
       )}
     </div>
   );
