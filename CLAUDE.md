@@ -92,8 +92,10 @@ resources/views/welcome.blade.php   Mount point. @viteReactRefresh before @vite.
   current_user_can_see) and `public.*` domain tables, with RLS on every table,
   and seeds 407 employees, 31 grants, 176 companies/accounts, 328 vas, and
   sample builds/tickets.
-- npm deps to add: `@supabase/supabase-js`, `react-router-dom`, and per app
-  `recharts` / `lucide-react` as their files require.
+- npm deps are fixed by the Dependency policy (see that section), not chosen per
+  app: `@supabase/supabase-js`, `react-router-dom`, `lucide-react` (icons),
+  `recharts` (charts). Do not add a library outside that set without updating the
+  policy table.
 
 ### Identity and RLS testing
 
@@ -127,6 +129,9 @@ they designed stays intact; only the data source underneath changes.
 6. **Fold into the shell:** new folder under `apps/`, add one entry to
    `registry.js` (key, label, path, lazy import), wrap comes for free via the
    shell's per-route error boundary.
+7. **Normalize imports to the approved library set** (see Dependency policy). If
+   their file reaches for a non-approved icon/chart/util library, swap it to the
+   approved one rather than installing a parallel package.
 
 Put the translated root at `apps/<app>/index.jsx`. Do NOT import the teammate's
 raw file directly; the translated version is what the hub runs. See
@@ -148,6 +153,42 @@ spine depend on; a one-off field in one app's vision is not worth fragmenting
 it. The exception: when their vision reveals a real gap the schema genuinely
 missed, change the schema once, regenerate, and note it. This bias is permanent
 and stops the schema drifting app by app.
+
+## Dependency policy (standing rule)
+
+One `package.json`, one `node_modules`, shared by every app. The standing rule is
+the library twin of bend-to-the-schema: **bend the app to the approved library
+set.** A library is approved for ONE job, and that is the only library for that
+job. The complete approved set:
+
+| Job | Library | Imported by |
+|-----|---------|-------------|
+| UI framework | `react`, `react-dom` | everything |
+| Routing | `react-router-dom` | shell only (apps get their route from the shell) |
+| Data | `@supabase/supabase-js` | shell only (apps receive `supabase` as a prop, never import the client) |
+| Icons | `lucide-react` | any app |
+| Charts | `recharts` | any app |
+
+Build tooling (`vite`, `laravel-vite-plugin`, `tailwindcss`, `@tailwindcss/vite`,
+`@vitejs/plugin-react`, `concurrently`) is infrastructure, fixed once, not part
+of this list.
+
+Rules:
+- Teammates' files will reach for whatever they happened to use (a different icon
+  pack, `chart.js`, `victory`, a date lib). During translation, **swap it to the
+  approved library**, never install a parallel one. This is the same chokepoint
+  that maps names to UUIDs; the normalization happens once, in the translation
+  pass.
+- Adding a genuinely new library is a deliberate decision that **updates this
+  table**, not something that arrives per app. The bar: no approved library can
+  do the job, and the need is real (not one screen's nice-to-have).
+- Per-route code-splitting means an app's libraries load only on its route, so
+  `recharts` never weighs on the Portal or Dev Support. Cost is isolated; that is
+  not a reason to fragment, but it is why the list staying small is cheap to keep.
+- Charts: standardize on `recharts`. When the first chart app is translated
+  (Client Profile), introduce a thin brand-themed wrapper in `lib/` (brand colors
+  + Poppins baked in) so every chart is on-brand by default and the underlying
+  library is swappable in one file. The Training apps reuse that wrapper.
 
 ## Identity model (correction baked into the schema)
 
