@@ -39,12 +39,12 @@ export const APPS = [
   //   path: '/trainer-workload',
   //   component: lazy(() => import('./trainerWorkload/index.jsx')),
   // },
-  // {
-  //   key: 'qaqc',
-  //   label: 'QAQC',
-  //   path: '/qaqc',
-  //   component: lazy(() => import('./qaqc/index.jsx')),
-  // },
+  {
+    key: 'qaqc',
+    label: 'QAQC',
+    path: '/qaqc',
+    component: lazy(() => import('./qaqc/index.jsx')),
+  },
   {
     key: 'devsupport',
     label: 'Dev Support',
