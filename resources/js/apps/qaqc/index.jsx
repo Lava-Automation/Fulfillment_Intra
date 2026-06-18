@@ -15,10 +15,13 @@
  *          (qa.build.logged | status_changed | field_changed | updated).
  *
  * Schema note: builds carries single-uuid FKs (va_id, qa_reviewer_id, pm_id), so
- * names render from spine.employees and edits write the UUID back. The sheet's
- * combined "Kristel, Siah" reviewer collapses to one reviewer to match the
- * single qa_reviewer_id column (bend-to-schema). client_name / im_link /
- * on_time_override were added to builds to preserve the sheet's fields.
+ * names render from spine.employees and edits write the UUID back. The QA team is
+ * resolved from the employee data by role (Kristel Joyce Asuncion and Josiah
+ * "Siah" Hannen Lera are the two QA/QC people), not from hardcoded names. The
+ * sheet's combined "Kristel, Siah" reviewer is two distinct people; because
+ * qa_reviewer_id is a single column, a build records one reviewer for now
+ * (open: add a second reviewer column if the team needs both). client_name /
+ * im_link / on_time_override were added to builds to preserve the sheet's fields.
  */
 
 import { useState, useMemo, useEffect, useCallback } from "react";
@@ -443,11 +446,12 @@ export default function QAQCTracker({ session, supabase }) {
     const [bRes, aRes, eRes, vRes] = await Promise.all([
       supabase.from("builds").select("build_id,account_id,va_id,qa_reviewer_id,pm_id,crm,status,issues,date_start,date_finish,checklist_url,pending_url,im_link,client_name,on_time_override").order("date_start", { ascending: false }),
       supabase.from("accounts").select("account_id,hubspot_company_id,pm_id"),
-      supabase.from("employees").select("id,name"),
+      supabase.from("employees").select("id,name,position"),
       supabase.from("vas").select("employee_id"),
     ]);
 
-    const emp = new Map((eRes.data || []).map(e => [e.id, e.name]));
+    const empRows = eRes.data || [];
+    const emp = new Map(empRows.map(e => [e.id, e.name]));
     const accs = aRes.data || [];
     const compIds = [...new Set(accs.map(a => a.hubspot_company_id).filter(Boolean))];
     let compName = {};
@@ -477,7 +481,12 @@ export default function QAQCTracker({ session, supabase }) {
     const toOpt = (id) => ({ id, name: emp.get(id) || "" });
 
     const pmIds = [...new Set(accs.map(a => a.pm_id).filter(Boolean).concat(rows.map(r => r.pm_id).filter(Boolean)))];
-    const qaIds = [...new Set(rows.map(r => r.qa_id).filter(Boolean).concat(me?.id ? [me.id] : []))];
+    // QA reviewers come from the employee data itself: anyone in a QA/QC role
+    // (e.g. Kristel Joyce Asuncion, Josiah "Siah" Hannen Lera), unioned with
+    // whoever is already a reviewer on a build. This resolves nicknames/short
+    // names to the proper spine.employees record instead of guessing.
+    const qaTeam = empRows.filter(e => /qa\/?qc|\bqa\b/i.test(e.position || "")).map(e => e.id);
+    const qaIds = [...new Set(qaTeam.concat(rows.map(r => r.qa_id).filter(Boolean)))];
 
     setPmOptions(pmIds.map(toOpt).filter(o => o.name).sort(sortByName));
     setQaOptions(qaIds.map(toOpt).filter(o => o.name).sort(sortByName));
