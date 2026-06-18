@@ -35,6 +35,9 @@ const DISPLAY = { fontFamily: FONT_BODY, fontWeight: 600, textTransform: "upperc
 
 const TABS = ["Overview", "General", "Reporting", "Meetings", "People", "Tech stack", "Timeline"];
 const ROLE_GROUPS = ["Sales", "Customer Success", "Fulfillment", "Team Lead"];
+// Tech catalog categories (the "specification" of each tool). Catalog items
+// carry one of these in tech_stack.category; anything else falls under "Other".
+const TECH_CATEGORIES = ["AMS", "CRM", "Email", "Form Software", "AI Tools", "Integrators", "Phone Systems", "Prospecting", "E-Signature", "Other"];
 
 // -- helpers -----------------------------------------------------------------
 const initialsOf = (name) => (name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -423,24 +426,43 @@ function PeopleTab({ d, onAssignVA, onRemoveVA, onAssignTeam, onRemoveTeam }) {
 }
 
 function TechStackTab({ d, onToggleTool, onAddCatalog, onBulkAdd, onRemoveCatalog }) {
-  const [newTech, setNewTech] = useState("");
   const [bulk, setBulk] = useState("");
   const [showBulk, setShowBulk] = useState(false);
+  const [bulkCat, setBulkCat] = useState(TECH_CATEGORIES[0]);
+  const [addingCat, setAddingCat] = useState(null); // which category's inline add is open
+  const [inlineName, setInlineName] = useState("");
 
   const selected = new Set(d.account.tech_tools || []);
-  const catalog = [...d.catalog].sort((a, b) => a.name.localeCompare(b.name));
+  // Group the catalog by category; unknown categories fall under "Other".
+  const byCat = {};
+  for (const c of d.catalog) {
+    const cat = TECH_CATEGORIES.includes(c.category) ? c.category : "Other";
+    (byCat[cat] = byCat[cat] || []).push(c);
+  }
   const inputStyle = { border: `1px solid ${N.line}`, borderRadius: 8, padding: "8px 11px", fontFamily: FONT_BODY, fontSize: 13, color: B.black, outline: "none", background: B.white };
   const btn = (bg, fg) => ({ background: bg, color: fg, border: "none", borderRadius: 8, padding: "8px 14px", fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 600, cursor: "pointer" });
+
+  const openInline = (cat) => { setAddingCat(cat); setInlineName(""); };
+  const submitInline = (cat) => { if (inlineName.trim()) onAddCatalog(inlineName, cat); setInlineName(""); setAddingCat(null); };
+
+  const chip = (label, { on, onClick, onRemove, dashed } = {}) => (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: on ? B.white : B.darkBlue, background: on ? B.darkBlue : B.white, border: `1px ${dashed ? "dashed" : "solid"} ${on ? B.darkBlue : N.line}`, padding: onRemove ? "6px 8px 6px 12px" : "6px 12px", borderRadius: 999 }}>
+      <button onClick={onClick} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", padding: 0, font: "inherit", display: "inline-flex", alignItems: "center", gap: 5 }}>
+        {on && <Check size={12} strokeWidth={3} />}{label}
+      </button>
+      {onRemove && <button onClick={onRemove} title="Delete from catalog" style={{ background: "none", border: "none", cursor: "pointer", color: on ? "rgba(255,255,255,0.7)" : N.faint, padding: 0, display: "flex" }}><X size={13} /></button>}
+    </span>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <Card>
         <SectionHeading icon={Wrench}>This account's tech stack</SectionHeading>
-        <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 12 }}>The software selected for this account. Click a catalog item below to add or remove it.</div>
+        <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 12 }}>The software selected for this account. Click a tool below to add or remove it.</div>
         {selected.size ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
             {[...selected].map((t) => (
-              <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: B.white, background: B.darkBlue, padding: "6px 8px 6px 12px", borderRadius: 8 }}>
+              <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: B.white, background: B.darkBlue, padding: "6px 8px 6px 12px", borderRadius: 999 }}>
                 {t}
                 <button onClick={() => onToggleTool(t)} title="Remove" style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.7)", padding: 0, display: "flex" }}><X size={13} /></button>
               </span>
@@ -450,42 +472,53 @@ function TechStackTab({ d, onToggleTool, onAddCatalog, onBulkAdd, onRemoveCatalo
       </Card>
 
       <Card>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-          <SectionHeading icon={Wrench}>Catalog</SectionHeading>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+          <SectionHeading icon={Wrench}>Select your tools</SectionHeading>
           <button onClick={() => setShowBulk((s) => !s)} style={{ marginLeft: "auto", ...btn("transparent", B.darkBlue), border: `1px solid ${N.line}` }}>{showBulk ? "Close bulk add" : "Bulk add"}</button>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-          <input value={newTech} onChange={(e) => setNewTech(e.target.value)} placeholder="Add a tool to the catalog…" style={{ ...inputStyle, flex: 1, minWidth: 200 }}
-            onKeyDown={(e) => { if (e.key === "Enter") { onAddCatalog(newTech); setNewTech(""); } }} />
-          <button onClick={() => { onAddCatalog(newTech); setNewTech(""); }} style={btn(B.red, B.white)}><Plus size={13} style={{ marginRight: 5, verticalAlign: "-2px" }} />Add</button>
-        </div>
-
         {showBulk && (
-          <div style={{ marginBottom: 16, padding: 14, background: N.fill, borderRadius: 10 }}>
-            <div style={{ fontSize: 12, color: N.muted, marginBottom: 8 }}>Paste a list, one tool per line (or comma separated). Existing names are skipped.</div>
-            <textarea value={bulk} onChange={(e) => setBulk(e.target.value)} placeholder={"AgencyZoom\nHawkSoft AMS\nRingCentral"} style={{ ...inputStyle, width: "100%", boxSizing: "border-box", height: 100, resize: "none", lineHeight: 1.5 }} />
+          <div style={{ marginBottom: 18, padding: 14, background: N.fill, borderRadius: 10 }}>
+            <div style={{ fontSize: 12, color: N.muted, marginBottom: 8 }}>Paste a list, one tool per line (or comma separated). Existing names are skipped. They all go into the chosen category.</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 12, color: N.muted }}>Category</span>
+              <select value={bulkCat} onChange={(e) => setBulkCat(e.target.value)} style={inputStyle}>
+                {TECH_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <textarea value={bulk} onChange={(e) => setBulk(e.target.value)} placeholder={"HawkSoft\nAgencyZoom\nRingCentral"} style={{ ...inputStyle, width: "100%", boxSizing: "border-box", height: 100, resize: "none", lineHeight: 1.5 }} />
             <div style={{ marginTop: 10 }}>
-              <button onClick={() => { onBulkAdd(bulk); setBulk(""); setShowBulk(false); }} style={btn(B.darkBlue, B.white)}>Add list to catalog</button>
+              <button onClick={() => { onBulkAdd(bulk, bulkCat); setBulk(""); setShowBulk(false); }} style={btn(B.darkBlue, B.white)}>Add list to catalog</button>
             </div>
           </div>
         )}
 
-        {catalog.length ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
-            {catalog.map((c) => {
-              const on = selected.has(c.name);
-              return (
-                <span key={c.tech_id} style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: on ? B.white : B.darkBlue, background: on ? B.teal : N.fill, border: `1px solid ${on ? B.teal : N.line}`, padding: "6px 8px 6px 12px", borderRadius: 8 }}>
-                  <button onClick={() => onToggleTool(c.name)} title={on ? "Remove from this account" : "Add to this account"} style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", padding: 0, font: "inherit", display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    {on && <Check size={12} strokeWidth={3} />}{c.name}
-                  </button>
-                  <button onClick={() => onRemoveCatalog(c.tech_id, c.name)} title="Delete from catalog" style={{ background: "none", border: "none", cursor: "pointer", color: on ? "rgba(255,255,255,0.7)" : N.faint, padding: 0, display: "flex" }}><X size={13} /></button>
-                </span>
-              );
-            })}
-          </div>
-        ) : <Empty>The catalog is empty. Add tools above.</Empty>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {TECH_CATEGORIES.map((cat) => {
+            const items = (byCat[cat] || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+            return (
+              <div key={cat}>
+                <div style={{ ...DISPLAY, fontSize: 10.5, color: N.faint, marginBottom: 9 }}>{cat}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 9, alignItems: "center" }}>
+                  {items.map((c) => chip(c.name, {
+                    on: selected.has(c.name),
+                    onClick: () => onToggleTool(c.name),
+                    onRemove: () => onRemoveCatalog(c.tech_id, c.name),
+                  }))}
+                  {addingCat === cat ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <input autoFocus value={inlineName} onChange={(e) => setInlineName(e.target.value)} placeholder={`New ${cat} tool`} style={{ ...inputStyle, padding: "5px 10px", width: 150 }}
+                        onKeyDown={(e) => { if (e.key === "Enter") submitInline(cat); if (e.key === "Escape") setAddingCat(null); }} />
+                      <button onClick={() => submitInline(cat)} style={btn(B.red, B.white)}>Add</button>
+                    </span>
+                  ) : (
+                    chip("+ Other", { dashed: true, onClick: () => openInline(cat) })
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </Card>
     </div>
   );
@@ -604,23 +637,23 @@ function Profile({ supabase, session, accountId, onBack }) {
     await logActivity({ app: "clientprofile", actor: me, action: has ? "clientprofile.techstack.removed" : "clientprofile.techstack.added", entityType: "account", entityId: accountId, details: { tool: name } });
     load();
   }
-  async function addCatalog(name) {
+  async function addCatalog(name, category) {
     const n = (name || "").trim();
     if (!n) return;
     if (d.catalog.some((c) => c.name.toLowerCase() === n.toLowerCase())) { alert(`"${n}" is already in the catalog.`); return; }
-    const { error: e } = await supabase.from("tech_stack").insert({ name: n });
+    const { error: e } = await supabase.from("tech_stack").insert({ name: n, category: category || null });
     if (e) { alert("Could not add to catalog: " + e.message); return; }
-    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.tech.catalog_added", entityType: "tech_stack", entityId: n, details: { name: n } });
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.tech.catalog_added", entityType: "tech_stack", entityId: n, details: { name: n, category } });
     load();
   }
-  async function bulkAddCatalog(text) {
+  async function bulkAddCatalog(text, category) {
     const existing = new Set(d.catalog.map((c) => c.name.toLowerCase()));
     const names = [...new Set((text || "").split(/[\n,]/).map((s) => s.trim()).filter(Boolean))]
       .filter((n) => !existing.has(n.toLowerCase()));
     if (!names.length) { alert("Nothing new to add."); return; }
-    const { error: e } = await supabase.from("tech_stack").insert(names.map((name) => ({ name })));
+    const { error: e } = await supabase.from("tech_stack").insert(names.map((name) => ({ name, category: category || null })));
     if (e) { alert("Could not bulk add: " + e.message); return; }
-    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.tech.catalog_bulk_added", entityType: "tech_stack", entityId: accountId, details: { count: names.length } });
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.tech.catalog_bulk_added", entityType: "tech_stack", entityId: accountId, details: { count: names.length, category } });
     load();
   }
   async function removeCatalog(techId, name) {
