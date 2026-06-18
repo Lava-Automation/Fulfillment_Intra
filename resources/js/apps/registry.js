@@ -21,12 +21,12 @@ export const APPS = [
     path: '/',
     component: lazy(() => import('./portal/index.jsx')),
   },
-  // {
-  //   key: 'clientprofile',
-  //   label: 'Client Profiles',
-  //   path: '/client-profiles',
-  //   component: lazy(() => import('./clientProfile/index.jsx')),
-  // },
+  {
+    key: 'clientprofile',
+    label: 'Client Profiles',
+    path: '/client-profiles',
+    component: lazy(() => import('./clientProfile/index.jsx')),
+  },
   // {
   //   key: 'training',
   //   label: 'Training Tracker',
