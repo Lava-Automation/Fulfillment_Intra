@@ -20,7 +20,9 @@ import { useState, useEffect, useCallback } from "react";
 import {
   ChevronLeft, Building2, CalendarDays, Pin, Check, Target, Briefcase,
   Users, Wrench, ListChecks, Clock, Map as MapIcon, LayoutDashboard, FileText, Star,
+  X, Plus,
 } from "lucide-react";
+import { logActivity } from "../../lib/activity";
 
 // Brand floor.
 const B = { red: "#E73835", darkBlue: "#24242D", teal: "#145365", white: "#FFFFFF", black: "#1B120B" };
@@ -32,6 +34,7 @@ const FONT_BODY = "'Poppins', system-ui, -apple-system, sans-serif";
 const DISPLAY = { fontFamily: FONT_BODY, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" };
 
 const TABS = ["Overview", "General", "Reporting", "Meetings", "People", "Tech stack", "Timeline"];
+const ROLE_GROUPS = ["Sales", "Customer Success", "Fulfillment", "Team Lead"];
 
 // -- helpers -----------------------------------------------------------------
 const initialsOf = (name) => (name || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -327,28 +330,93 @@ function MeetingsTab({ d }) {
   );
 }
 
-function PeopleTab({ d }) {
+// Native "add" dropdown that calls onPick(id) and resets. Until Company<->person
+// links are firm, assignment is a plain editable dropdown of real people.
+function AddPicker({ options, placeholder, onPick }) {
+  return (
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px dashed ${N.faint}`, borderRadius: 8, padding: "5px 9px" }}>
+      <Plus size={13} color={N.muted} />
+      <select
+        value=""
+        onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
+        style={{ border: "none", background: "transparent", outline: "none", fontFamily: FONT_BODY, fontSize: 12.5, color: N.muted, cursor: "pointer", maxWidth: 220 }}
+      >
+        <option value="">{placeholder}</option>
+        {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function PersonChip({ name, sub, onRemove }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: `1px solid ${N.line}`, borderRadius: 10 }}>
+      <Monogram name={name} size={30} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13.5, color: B.black, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name || "Unknown"}</div>
+        {sub && <div style={{ fontSize: 11.5, color: N.muted }}>{sub}</div>}
+      </div>
+      {onRemove && (
+        <button onClick={onRemove} title="Remove" style={{ background: "none", border: "none", cursor: "pointer", color: N.faint, padding: 2, display: "flex", flexShrink: 0 }}>
+          <X size={15} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PeopleTab({ d, onAssignVA, onRemoveVA, onAssignTeam, onRemoveTeam }) {
+  // VA roster not already on this account, for the add dropdown.
+  const vaPickable = d.vaRoster
+    .filter((v) => v.account_id !== d.account.account_id)
+    .map((v) => ({ id: v.employee_id, name: d.empName[v.employee_id] || "Unknown" }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const teamByGroup = (group) => d.team.filter((t) => t.role_group === group);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <Card>
-        <SectionHeading icon={Users}>Deployed virtual assistants</SectionHeading>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+          <SectionHeading icon={Users}>Deployed virtual assistants</SectionHeading>
+          <span style={{ marginLeft: "auto" }}>
+            <AddPicker options={vaPickable} placeholder="Assign a VA…" onPick={onAssignVA} />
+          </span>
+        </div>
         {d.vas.length ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 12 }}>
             {d.vas.map((v) => (
-              <div key={v.employee_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: `1px solid ${N.line}`, borderRadius: 10 }}>
-                <Monogram name={d.empName[v.employee_id]} size={30} />
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, color: B.black, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.empName[v.employee_id] || "Unknown"}</div>
-                  <div style={{ fontSize: 11.5, color: N.muted }}>{v.title || titleCase(v.status) || "VA"}</div>
-                </div>
-              </div>
+              <PersonChip key={v.employee_id} name={d.empName[v.employee_id]} sub={v.title || titleCase(v.status) || "VA"} onRemove={() => onRemoveVA(v.employee_id)} />
             ))}
           </div>
-        ) : <Empty>No virtual assistants are linked to this account yet. Assignment editing arrives in the next pass.</Empty>}
+        ) : <Empty>No virtual assistants linked yet. Use “Assign a VA” to add one.</Empty>}
       </Card>
+
       <Card>
         <SectionHeading icon={Briefcase}>Lava account team</SectionHeading>
-        <Empty>Editable team assignment (Sales, Customer Success, Fulfillment, Team Lead) is coming in the next pass. For now the account owner shows under General.</Empty>
+        <div style={{ fontSize: 12, color: N.faint, marginBottom: 14 }}>Editable until the Company-to-person links are firmed up. Pick real people from the roster.</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+          {ROLE_GROUPS.map((group) => {
+            const members = teamByGroup(group);
+            const memberIds = new Set(members.map((m) => m.employee_id));
+            const pickable = d.allEmployees.filter((e) => !memberIds.has(e.id));
+            return (
+              <div key={group} style={{ border: `1px solid ${N.line}`, borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ ...DISPLAY, fontSize: 10.5, color: N.muted, marginBottom: 10 }}>{group}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                  {members.length ? members.map((m) => (
+                    <div key={m.employee_id} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <Monogram name={d.empName[m.employee_id]} size={24} />
+                      <span style={{ flex: 1, fontSize: 13, color: B.black, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.empName[m.employee_id] || "Unknown"}</span>
+                      <button onClick={() => onRemoveTeam(m.employee_id, group)} title="Remove" style={{ background: "none", border: "none", cursor: "pointer", color: N.faint, padding: 2, display: "flex" }}><X size={14} /></button>
+                    </div>
+                  )) : <span style={{ fontSize: 12, color: N.faint }}>No one assigned.</span>}
+                </div>
+                <AddPicker options={pickable} placeholder="Add…" onPick={(id) => onAssignTeam(id, group)} />
+              </div>
+            );
+          })}
+        </div>
       </Card>
     </div>
   );
@@ -393,7 +461,8 @@ function TimelineTab({ d }) {
 }
 
 // -- Profile (loads one account's 360) ---------------------------------------
-function Profile({ supabase, accountId, onBack }) {
+function Profile({ supabase, session, accountId, onBack }) {
+  const me = session?.employee;
   const [d, setD] = useState(null);
   const [tab, setTab] = useState("Overview");
   const [error, setError] = useState(null);
@@ -408,18 +477,21 @@ function Profile({ supabase, accountId, onBack }) {
     if (aErr) { setError(aErr.message); return; }
     if (!account) { setError("Account not found."); return; }
 
-    const [cRes, eRes, vRes, mRes, gRes, pRes, aiRes, tRes] = await Promise.all([
+    const [cRes, eRes, vRes, mRes, gRes, pRes, aiRes, tRes, teamRes] = await Promise.all([
       account.hubspot_company_id ? supabase.from("hubspot_companies").select("name").eq("id", account.hubspot_company_id).maybeSingle() : Promise.resolve({ data: null }),
       supabase.from("employees").select("id,name"),
-      supabase.from("vas").select("employee_id,title,status").eq("account_id", accountId),
+      supabase.from("vas").select("employee_id,account_id,title,status"), // full roster; assigned set derived below
       supabase.from("meetings").select("meeting_id,type,title,status,meeting_date,rating,notes").eq("account_id", accountId).order("meeting_date", { ascending: false }),
       supabase.from("goals").select("goal_id,title,status,quarter,owner_id").eq("account_id", accountId),
       supabase.from("projects").select("project_id,name,status,progress_pct").eq("account_id", accountId),
       supabase.from("action_items").select("action_item_id,body,owner_id,due_date,status").eq("account_id", accountId).order("due_date", { ascending: true }),
       supabase.from("timeline_events").select("timeline_event_id,event_date,label,detail,color").eq("account_id", accountId).order("event_date", { ascending: false }),
+      supabase.from("account_team").select("employee_id,role_group").eq("account_id", accountId),
     ]);
 
-    const empName = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
+    const emps = eRes.data || [];
+    const empName = Object.fromEntries(emps.map((e) => [e.id, e.name]));
+    const vaRoster = vRes.data || [];
     setD({
       account,
       name: cRes.data?.name || "(no agency)",
@@ -427,7 +499,10 @@ function Profile({ supabase, accountId, onBack }) {
       stage: account.stage,
       pm: empName[account.pm_id] || null,
       empName,
-      vas: vRes.data || [],
+      allEmployees: emps.map((e) => ({ id: e.id, name: e.name })).sort((a, b) => a.name.localeCompare(b.name)),
+      vaRoster,
+      vas: vaRoster.filter((v) => v.account_id === accountId),
+      team: teamRes.data || [],
       meetings: mRes.data || [],
       goals: gRes.data || [],
       projects: pRes.data || [],
@@ -437,6 +512,32 @@ function Profile({ supabase, accountId, onBack }) {
   }, [supabase, accountId]);
 
   useEffect(() => { setD(null); load(); }, [load]);
+
+  // -- People writes: vas.account_id for VAs, account_team for the Lava team --
+  async function assignVA(employeeId) {
+    const { error: e } = await supabase.from("vas").update({ account_id: accountId }).eq("employee_id", employeeId);
+    if (e) { alert("Could not assign VA: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.va.assigned", entityType: "account", entityId: accountId, details: { va: d.empName[employeeId] } });
+    load();
+  }
+  async function removeVA(employeeId) {
+    const { error: e } = await supabase.from("vas").update({ account_id: null }).eq("employee_id", employeeId);
+    if (e) { alert("Could not remove VA: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.va.removed", entityType: "account", entityId: accountId, details: { va: d.empName[employeeId] } });
+    load();
+  }
+  async function assignTeam(employeeId, roleGroup) {
+    const { error: e } = await supabase.from("account_team").insert({ account_id: accountId, employee_id: employeeId, role_group: roleGroup });
+    if (e) { alert("Could not add to team: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.team.assigned", entityType: "account", entityId: accountId, details: { person: d.empName[employeeId], group: roleGroup } });
+    load();
+  }
+  async function removeTeam(employeeId, roleGroup) {
+    const { error: e } = await supabase.from("account_team").delete().eq("account_id", accountId).eq("employee_id", employeeId).eq("role_group", roleGroup);
+    if (e) { alert("Could not remove from team: " + e.message); return; }
+    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.team.removed", entityType: "account", entityId: accountId, details: { person: d.empName[employeeId], group: roleGroup } });
+    load();
+  }
 
   if (error) return <div style={{ padding: 28, color: B.red, fontFamily: FONT_BODY }}>Error: {error}</div>;
   if (!d) return <div style={{ padding: 28, color: N.muted, fontFamily: FONT_BODY }}>Loading profile…</div>;
@@ -450,7 +551,7 @@ function Profile({ supabase, accountId, onBack }) {
         {tab === "General" && <General d={d} />}
         {tab === "Reporting" && <ComingSoon title="Reporting" body="Agency reporting (leads, pipelines, premium, producers, reviews) is a separate app that will tie in here later. It pulls from the agency CRM, not the spine." />}
         {tab === "Meetings" && <MeetingsTab d={d} />}
-        {tab === "People" && <PeopleTab d={d} />}
+        {tab === "People" && <PeopleTab d={d} onAssignVA={assignVA} onRemoveVA={removeVA} onAssignTeam={assignTeam} onRemoveTeam={removeTeam} />}
         {tab === "Tech stack" && <TechStackTab d={d} />}
         {tab === "Timeline" && <TimelineTab d={d} />}
       </div>
@@ -470,7 +571,7 @@ export default function ClientProfileApp({ session, supabase, accountId }) {
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap');`}</style>
       <div style={{ maxWidth: 1100, margin: "0 auto", background: B.white, minHeight: "100vh", border: `1px solid ${N.line}` }}>
         {selectedId ? (
-          <Profile supabase={supabase} accountId={selectedId} onBack={accountId ? null : () => setSelectedId(null)} />
+          <Profile supabase={supabase} session={session} accountId={selectedId} onBack={accountId ? null : () => setSelectedId(null)} />
         ) : (
           <>
             <div style={{ display: "flex", gap: 6, padding: "12px 28px", borderBottom: `1px solid ${N.line}`, background: B.white }}>
