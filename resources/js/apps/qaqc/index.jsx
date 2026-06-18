@@ -227,6 +227,64 @@ function InlineSelect({ value, options, onChange, render, width }) {
   );
 }
 
+// Multi-select for QA reviewers: a build can have more than one (e.g. Kristel
+// AND Josiah). Works on UUIDs; renders the chosen people's names joined. The
+// popover is position:fixed so it is not clipped by the scrolling table body.
+function MultiSelect({ valueIds, options, onChange, placeholder = "Select…" }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ left: 0, top: 0, width: 220 });
+  const ids = valueIds || [];
+  const openMenu = (e) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    setPos({ left: r.left, top: r.bottom + 4, width: Math.max(r.width, 220) });
+    setOpen(true);
+  };
+  const toggle = (id) => onChange(ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+  const names = options.filter(o => ids.includes(o.id)).map(o => o.name);
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <button onClick={openMenu} style={{
+        display: "inline-flex", alignItems: "center", gap: 4, border: "none", background: "transparent",
+        cursor: "pointer", padding: 0, fontFamily: FONT_BODY, maxWidth: 180,
+      }}>
+        <span style={{ fontSize: 12, color: names.length ? B.dark : "#9090A8", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160 }}>
+          {names.length ? names.join(", ") : placeholder}
+        </span>
+        <span style={{ fontSize: 9, color: "#B0B0C0" }}>▾</span>
+      </button>
+      {open && (
+        <>
+          <div onClick={e => { e.stopPropagation(); setOpen(false); }} style={{ position: "fixed", inset: 0, zIndex: 299 }} />
+          <div style={{
+            position: "fixed", left: pos.left, top: pos.top, width: pos.width, maxHeight: 240, overflowY: "auto",
+            background: B.white, border: "1px solid #E0E0E8", borderRadius: 8, boxShadow: "0 12px 32px rgba(0,0,0,0.18)",
+            zIndex: 300, padding: 6,
+          }}>
+            {options.length === 0 && <div style={{ fontSize: 11, color: "#9090A8", padding: "8px 10px" }}>No reviewers found.</div>}
+            {options.map(o => {
+              const on = ids.includes(o.id);
+              return (
+                <div key={o.id} onClick={e => { e.stopPropagation(); toggle(o.id); }} style={{
+                  display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 6, cursor: "pointer",
+                  background: on ? "#F0F7F9" : "transparent",
+                }}>
+                  <span style={{
+                    width: 15, height: 15, borderRadius: 4, border: "1.5px solid " + (on ? B.teal : "#C0C0CC"),
+                    background: on ? B.teal : B.white, display: "flex", alignItems: "center", justifyContent: "center",
+                    color: B.white, fontSize: 10, fontWeight: 800,
+                  }}>{on ? "✓" : ""}</span>
+                  <span style={{ fontSize: 12, color: B.dark, fontFamily: FONT_BODY }}>{o.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // --- DETAIL / REVIEW DRAWER -------------------------------------------------
 // Agency is read-only here: it is derived from the linked account/company, not a
 // builds column. VA / PM / QA are real-employee dropdowns so a save writes UUIDs.
@@ -238,7 +296,6 @@ function BuildDrawer({ build, onClose, onSave, vaOptions, pmOptions, qaOptions }
 
   const vaNames = useMemo(() => ["Unassigned", ...vaOptions.map(o => o.name)], [vaOptions]);
   const pmNames = useMemo(() => pmOptions.map(o => o.name), [pmOptions]);
-  const qaNames = useMemo(() => qaOptions.map(o => o.name), [qaOptions]);
 
   const labelStyle = { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.6px", color: "#9090A8", marginBottom: 4, display: "block", fontFamily: FONT_BODY };
   const valueStyle = { fontSize: 13, color: B.dark, fontFamily: FONT_BODY };
@@ -281,10 +338,10 @@ function BuildDrawer({ build, onClose, onSave, vaOptions, pmOptions, qaOptions }
               </div>
               {f.va_flag && <div style={{ fontSize: 9, color: B.red, fontWeight: 600, marginTop: 3 }}>⚑ no VA linked — assign one</div>}
             </div>
-            <div><span style={labelStyle}>QA Reviewer</span>
-              <select style={inputStyle} value={f.qa_reviewer} onChange={e => set("qa_reviewer", e.target.value)}>
-                {qaNames.map(q => <option key={q}>{q}</option>)}
-              </select>
+            <div><span style={labelStyle}>QA Reviewers</span>
+              <div style={{ ...inputStyle, display: "flex", alignItems: "center", minHeight: 37 }}>
+                <MultiSelect valueIds={f.qa_ids} options={qaOptions} onChange={ids => set("qa_ids", ids)} placeholder="Select reviewers" />
+              </div>
             </div>
           </div>
 
@@ -375,7 +432,7 @@ function NewBuildModal({ onClose, onSubmit, accounts, vaOptions, pmOptions, qaOp
     crm: "Agency Zoom",
     project_mgr: pmOptions[0]?.name || "",
     va_name: vaOptions[0]?.name || "",
-    qa_reviewer: qaOptions[0]?.name || "",
+    qa_ids: [],
     status: "Working On It",
     date_start: new Date().toISOString().slice(0, 10),
   });
@@ -396,7 +453,7 @@ function NewBuildModal({ onClose, onSubmit, accounts, vaOptions, pmOptions, qaOp
             <div><label style={labelStyle}>CRM *</label><select style={inputStyle} value={f.crm} onChange={e => set("crm", e.target.value)}>{CRMS.map(c => <option key={c}>{c}</option>)}</select></div>
             <div><label style={labelStyle}>Project Mgr *</label><select style={inputStyle} value={f.project_mgr} onChange={e => set("project_mgr", e.target.value)}>{pmOptions.map(c => <option key={c.id}>{c.name}</option>)}</select></div>
             <div><label style={labelStyle}>VA (built by) *</label><select style={inputStyle} value={f.va_name} onChange={e => set("va_name", e.target.value)}>{vaOptions.map(c => <option key={c.id}>{c.name}</option>)}</select></div>
-            <div><label style={labelStyle}>QA Reviewer *</label><select style={inputStyle} value={f.qa_reviewer} onChange={e => set("qa_reviewer", e.target.value)}>{qaOptions.map(c => <option key={c.id}>{c.name}</option>)}</select></div>
+            <div><label style={labelStyle}>QA Reviewers</label><div style={{ ...inputStyle, display: "flex", alignItems: "center", minHeight: 37 }}><MultiSelect valueIds={f.qa_ids} options={qaOptions} onChange={ids => set("qa_ids", ids)} placeholder="Select reviewers" /></div></div>
             <div><label style={labelStyle}>Status</label><select style={inputStyle} value={f.status} onChange={e => set("status", e.target.value)}>{STATUSES.map(c => <option key={c}>{c}</option>)}</select></div>
             <div><label style={labelStyle}>Date Start</label><input type="date" style={inputStyle} value={f.date_start} onChange={e => set("date_start", e.target.value)} /></div>
           </div>
@@ -437,14 +494,13 @@ export default function QAQCTracker({ session, supabase }) {
 
   // name -> uuid maps for writing FK columns back from the dropdown labels
   const pmIdByName  = useMemo(() => Object.fromEntries(pmOptions.map(o => [o.name, o.id])), [pmOptions]);
-  const qaIdByName  = useMemo(() => Object.fromEntries(qaOptions.map(o => [o.name, o.id])), [qaOptions]);
   const vaIdByName  = useMemo(() => Object.fromEntries(vaOptions.map(o => [o.name, o.id])), [vaOptions]);
   const acctIdByName = useMemo(() => Object.fromEntries(accounts.map(o => [o.name, o.id])), [accounts]);
 
   const load = useCallback(async () => {
     setLoading(true);
     const [bRes, aRes, eRes, vRes] = await Promise.all([
-      supabase.from("builds").select("build_id,account_id,va_id,qa_reviewer_id,pm_id,crm,status,issues,date_start,date_finish,checklist_url,pending_url,im_link,client_name,on_time_override").order("date_start", { ascending: false }),
+      supabase.from("builds").select("build_id,account_id,va_id,qa_reviewer_id,qa_reviewer_ids,pm_id,crm,status,issues,date_start,date_finish,checklist_url,pending_url,im_link,client_name,on_time_override").order("date_start", { ascending: false }),
       supabase.from("accounts").select("account_id,hubspot_company_id,pm_id"),
       supabase.from("employees").select("id,name,position"),
       supabase.from("vas").select("employee_id"),
@@ -469,7 +525,9 @@ export default function QAQCTracker({ session, supabase }) {
       crm: b.crm || "",
       pm_id: b.pm_id, project_mgr: emp.get(b.pm_id) || "",
       va_id: b.va_id, va_name: emp.get(b.va_id) || "Unassigned", va_flag: !b.va_id,
-      qa_id: b.qa_reviewer_id, qa_reviewer: emp.get(b.qa_reviewer_id) || "",
+      // qa_reviewer_ids is the full set; fall back to the legacy single column.
+      qa_ids: (b.qa_reviewer_ids && b.qa_reviewer_ids.length) ? b.qa_reviewer_ids : (b.qa_reviewer_id ? [b.qa_reviewer_id] : []),
+      qa_reviewer: ((b.qa_reviewer_ids && b.qa_reviewer_ids.length) ? b.qa_reviewer_ids : (b.qa_reviewer_id ? [b.qa_reviewer_id] : [])).map(id => emp.get(id)).filter(Boolean).join(", "),
       issues: b.issues || "", status: b.status || "Pending",
       date_start: b.date_start || "", date_finish: b.date_finish || "",
       checklist_url: b.checklist_url || "", pending_url: b.pending_url || "", im_link: b.im_link || "",
@@ -486,7 +544,7 @@ export default function QAQCTracker({ session, supabase }) {
     // whoever is already a reviewer on a build. This resolves nicknames/short
     // names to the proper spine.employees record instead of guessing.
     const qaTeam = empRows.filter(e => /qa\/?qc|\bqa\b/i.test(e.position || "")).map(e => e.id);
-    const qaIds = [...new Set(qaTeam.concat(rows.map(r => r.qa_id).filter(Boolean)))];
+    const qaIds = [...new Set(qaTeam.concat(rows.flatMap(r => r.qa_ids)))];
 
     setPmOptions(pmIds.map(toOpt).filter(o => o.name).sort(sortByName));
     setQaOptions(qaIds.map(toOpt).filter(o => o.name).sort(sortByName));
@@ -529,17 +587,28 @@ export default function QAQCTracker({ session, supabase }) {
     load();
   }
 
-  // Inline field edits from the table row (CRM, PM, QA, On Time).
+  // Inline field edits from the table row (CRM, PM, On Time).
   async function handleField(id, field, value) {
-    const colMap = { crm: "crm", project_mgr: "pm_id", qa_reviewer: "qa_reviewer_id", on_time_override: "on_time_override" };
+    const colMap = { crm: "crm", project_mgr: "pm_id", on_time_override: "on_time_override" };
     const col = colMap[field];
     if (!col) return;
     let dbval = value;
     if (field === "project_mgr") dbval = pmIdByName[value] ?? null;
-    if (field === "qa_reviewer") dbval = qaIdByName[value] ?? null;
     const { error } = await supabase.from("builds").update({ [col]: dbval }).eq("build_id", id);
     if (error) { alert("Could not update: " + error.message); return; }
     await logBuild(me, "qa.build.field_changed", id, { field, to: value });
+    load();
+  }
+
+  // QA reviewers are multi-valued. Write the full uuid[] and keep the legacy
+  // qa_reviewer_id in sync (= first reviewer) so single-column reads still work.
+  async function handleReviewers(id, reviewerIds) {
+    const { error } = await supabase.from("builds")
+      .update({ qa_reviewer_ids: reviewerIds, qa_reviewer_id: reviewerIds[0] ?? null })
+      .eq("build_id", id);
+    if (error) { alert("Could not update reviewers: " + error.message); return; }
+    const names = qaOptions.filter(o => reviewerIds.includes(o.id)).map(o => o.name);
+    await logBuild(me, "qa.build.field_changed", id, { field: "qa_reviewers", to: names });
     load();
   }
 
@@ -549,7 +618,8 @@ export default function QAQCTracker({ session, supabase }) {
       client_name: form.client_name || null,
       crm: form.crm || null,
       pm_id: pmIdByName[form.project_mgr] ?? null,
-      qa_reviewer_id: qaIdByName[form.qa_reviewer] ?? null,
+      qa_reviewer_ids: form.qa_ids || [],
+      qa_reviewer_id: (form.qa_ids && form.qa_ids[0]) || null,
       va_id: vaIdByName[form.va_name] ?? null,
       issues: form.issues || null,
       status: form.status,
@@ -571,7 +641,8 @@ export default function QAQCTracker({ session, supabase }) {
     const ins = {
       account_id: acctIdByName[f.account] || null,
       va_id: vaIdByName[f.va_name] ?? null,
-      qa_reviewer_id: qaIdByName[f.qa_reviewer] ?? null,
+      qa_reviewer_ids: f.qa_ids || [],
+      qa_reviewer_id: (f.qa_ids && f.qa_ids[0]) || null,
       pm_id: pmIdByName[f.project_mgr] ?? null,
       crm: f.crm,
       status: f.status,
@@ -718,7 +789,7 @@ export default function QAQCTracker({ session, supabase }) {
                         </div>
                       </td>
                       <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
-                        <InlineSelect value={b.qa_reviewer} options={qaOptions.map(o => o.name)} onChange={v => handleField(b.id, "qa_reviewer", v)} />
+                        <MultiSelect valueIds={b.qa_ids} options={qaOptions} onChange={ids => handleReviewers(b.id, ids)} placeholder="—" />
                       </td>
                       <td style={{ padding: "12px 14px", textAlign: "center" }}>
                         {ic > 0 ? <span style={{ display: "inline-block", minWidth: 20, padding: "2px 7px", borderRadius: 10, background: "#FEF2F2", color: B.red, fontSize: 11, fontWeight: 700 }}>{ic}</span> : <span style={{ fontSize: 11, color: "#C0C0CC" }}>—</span>}
