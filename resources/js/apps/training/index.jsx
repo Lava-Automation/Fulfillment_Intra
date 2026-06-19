@@ -489,6 +489,228 @@ function VADrawer({ t, onClose }) {
   );
 }
 
+// ---------------- Tracks (enrollments + module_progress) ----------------
+// CRM track = enrollments.track 'crm'; Insurance = 'ins'; Broad = neither (the
+// general/oneoff/automation courses, track null).
+const TRACK_OF_CATEGORY = { crm: "crm", insurance: "ins" };
+const overallPct = (mods) => mods.length ? Math.round(mods.reduce((s, m) => s + (m.pct || 0), 0) / mods.length) : 0;
+
+async function enrollVA(supabase, me, vaId, course) {
+  const track = TRACK_OF_CATEGORY[course.category] || null;
+  const { data: enr, error } = await supabase.from("enrollments")
+    .insert({ va_id: vaId, course_id: course.course_id, track, started_at: new Date().toISOString().slice(0, 10), completed: false })
+    .select("enrollment_id").maybeSingle();
+  if (error) { alert("Could not enroll: " + error.message); return false; }
+  const { data: mods } = await supabase.from("modules").select("module_id").eq("course_id", course.course_id);
+  if (mods && mods.length) {
+    await supabase.from("module_progress").insert(mods.map((m) => ({ enrollment_id: enr.enrollment_id, module_id: m.module_id, pct: 0, quiz_done: 0, quiz_total: 0 })));
+  }
+  await logActivity({ app: "training", actor: me, action: "training.enrollment.created", entityType: "enrollment", entityId: enr?.enrollment_id, details: { va: vaId, course: course.name } });
+  return true;
+}
+
+function TrackView({ supabase, me, track, blurb }) {
+  const [rows, setRows] = useState([]);
+  const [courses, setCourses] = useState([]); // courses available for this track
+  const [vaRoster, setVaRoster] = useState([]); // [{id,name}]
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [enrollOpen, setEnrollOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [enrRes, mpRes, cRes, mRes, eRes, vRes] = await Promise.all([
+      supabase.from("enrollments").select("enrollment_id,va_id,course_id,track,started_at,completed"),
+      supabase.from("module_progress").select("module_progress_id,enrollment_id,module_id,pct,quiz_done,quiz_total"),
+      supabase.from("courses").select("course_id,name,category,cert"),
+      supabase.from("modules").select("module_id,course_id,name,position").order("position", { ascending: true }),
+      supabase.from("employees").select("id,name"),
+      supabase.from("vas").select("employee_id"),
+    ]);
+    const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
+    const courseById = Object.fromEntries((cRes.data || []).map((c) => [c.course_id, c]));
+    const modsByCourse = {};
+    (mRes.data || []).forEach((m) => { (modsByCourse[m.course_id] = modsByCourse[m.course_id] || []).push(m); });
+    const mpByEnr = {};
+    (mpRes.data || []).forEach((mp) => { (mpByEnr[mp.enrollment_id] = mpByEnr[mp.enrollment_id] || []).push(mp); });
+
+    const inTrack = (e) => track === "broad" ? (e.track !== "crm" && e.track !== "ins") : e.track === track;
+    const built = (enrRes.data || []).filter(inTrack).map((e) => {
+      const course = courseById[e.course_id] || {};
+      const courseMods = (modsByCourse[e.course_id] || []);
+      const mpRows = mpByEnr[e.enrollment_id] || [];
+      const mpByModule = Object.fromEntries(mpRows.map((mp) => [mp.module_id, mp]));
+      const modules = courseMods.map((m) => ({ ...m, mp: mpByModule[m.module_id] || null }));
+      const pcts = modules.map((m) => m.mp?.pct || 0);
+      return {
+        ...e,
+        vaName: emp[e.va_id] || "Unknown",
+        courseName: course.name || "—",
+        cert: !!course.cert,
+        modules,
+        overall: pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : 0,
+      };
+    }).sort((a, b) => a.vaName.localeCompare(b.vaName));
+
+    // courses offered on this track for the enroll picker
+    const offered = (cRes.data || []).filter((c) => track === "broad" ? !TRACK_OF_CATEGORY[c.category] : TRACK_OF_CATEGORY[c.category] === track);
+    setCourses(offered.sort((a, b) => a.name.localeCompare(b.name)));
+    setVaRoster((vRes.data || []).map((v) => ({ id: v.employee_id, name: emp[v.employee_id] || "Unknown" })).filter((o) => o.name !== "Unknown").sort((a, b) => a.name.localeCompare(b.name)));
+    setRows(built);
+    setLoading(false);
+  }, [supabase, track]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = (id) => setExpanded((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  async function cycleModule(row, m) {
+    const cur = m.mp?.pct || 0;
+    const next = cur >= 100 ? 0 : cur === 0 ? 50 : 100;
+    if (m.mp) {
+      await supabase.from("module_progress").update({ pct: next, completed_at: next === 100 ? new Date().toISOString().slice(0, 10) : null }).eq("module_progress_id", m.mp.module_progress_id);
+    } else {
+      await supabase.from("module_progress").insert({ enrollment_id: row.enrollment_id, module_id: m.module_id, pct: next, quiz_done: 0, quiz_total: 0 });
+    }
+    // auto-complete the enrollment when every module is at 100
+    const allDone = row.modules.every((x) => (x.module_id === m.module_id ? next : (x.mp?.pct || 0)) >= 100);
+    if (allDone !== row.completed) await supabase.from("enrollments").update({ completed: allDone }).eq("enrollment_id", row.enrollment_id);
+    await logActivity({ app: "training", actor: me, action: "training.module.progress", entityType: "enrollment", entityId: row.enrollment_id, details: { module: m.name, pct: next } });
+    load();
+  }
+  async function unenroll(row) {
+    if (!confirm(`Unenroll ${row.vaName} from ${row.courseName}?`)) return;
+    await supabase.from("module_progress").delete().eq("enrollment_id", row.enrollment_id);
+    await supabase.from("enrollments").delete().eq("enrollment_id", row.enrollment_id);
+    await logActivity({ app: "training", actor: me, action: "training.enrollment.removed", entityType: "enrollment", entityId: row.enrollment_id, details: { va: row.vaName } });
+    load();
+  }
+
+  const pctColor = (p) => p >= 100 ? "#0f6e56" : p > 0 ? C.teal : "#bbb";
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: C.sub, maxWidth: 520, lineHeight: 1.5 }}>{blurb}</div>
+        <button onClick={() => setEnrollOpen(true)} style={btn.primary}><Plus size={13} /> Enroll VA</button>
+      </div>
+
+      {loading ? <div style={{ color: C.sub, fontSize: 13, padding: 20 }}>Loading…</div>
+        : rows.length === 0 ? <div style={{ padding: 24, color: C.sub, fontSize: 13, background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 12 }}>No VAs enrolled on this track yet. Use “Enroll VA” to add one.</div>
+        : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {rows.map((r) => {
+              const open = expanded.has(r.enrollment_id);
+              return (
+                <div key={r.enrollment_id} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12 }}>
+                  <div onClick={() => toggle(r.enrollment_id)} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.6fr 120px 90px 32px", gap: 12, alignItems: "center", padding: "13px 16px", cursor: "pointer" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: "flex", alignItems: "center", gap: 6 }}>{r.vaName}{r.cert && <BadgeCheck size={12} color="#0f6e56" />}</div>
+                    <div style={{ fontSize: 12, color: C.sub }}>{r.courseName}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, height: 6, borderRadius: 4, background: "#eee", overflow: "hidden" }}><div style={{ width: `${r.overall}%`, height: "100%", background: pctColor(r.overall) }} /></div>
+                      <span style={{ fontSize: 11, color: C.sub, width: 30 }}>{r.overall}%</span>
+                    </div>
+                    <div>{r.completed ? <span style={{ background: "#e1f5ee", color: "#0f6e56", fontSize: 10, fontWeight: 600, padding: "3px 9px", borderRadius: 20 }}>Complete</span> : <span style={{ background: "#e1f0f5", color: "#0c447c", fontSize: 10, fontWeight: 600, padding: "3px 9px", borderRadius: 20 }}>In progress</span>}</div>
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>{open ? <ChevronUp size={16} color="#bbb" /> : <ChevronDown size={16} color="#bbb" />}</div>
+                  </div>
+                  {open && (
+                    <div style={{ borderTop: `1px solid ${C.line}`, padding: "12px 16px", background: "#fcfcfd" }}>
+                      <div style={{ fontSize: 10, color: C.sub, marginBottom: 8 }}>Started {fmtDate(r.started_at)} · click a module to cycle 0 → 50 → 100%</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                        {r.modules.length ? r.modules.map((m) => {
+                          const p = m.mp?.pct || 0;
+                          return (
+                            <button key={m.module_id} onClick={() => cycleModule(r, m)} style={{ border: `1px solid ${C.line}`, background: p >= 100 ? "#e1f5ee" : p > 0 ? "#e6eef1" : "#fff", color: p >= 100 ? "#0f6e56" : p > 0 ? C.teal : C.sub, fontSize: 11, fontWeight: 500, padding: "6px 11px", borderRadius: 8, cursor: "pointer", fontFamily: FONT.body, display: "flex", alignItems: "center", gap: 6 }}>
+                              {m.name} <span style={{ fontWeight: 700 }}>{p}%</span>
+                            </button>
+                          );
+                        }) : <span style={{ fontSize: 11.5, color: "#bbb" }}>This course has no modules.</span>}
+                      </div>
+                      <button onClick={() => unenroll(r)} style={{ ...btn.row, color: C.red, borderColor: "#f3c9c8" }}><Trash2 size={12} /> Unenroll</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+      {enrollOpen && <EnrollModal courses={courses} roster={vaRoster} onClose={() => setEnrollOpen(false)} onEnroll={async (vaId, course) => { const ok = await enrollVA(supabase, me, vaId, course); if (ok) { setEnrollOpen(false); load(); } }} />}
+    </div>
+  );
+}
+
+function EnrollModal({ courses, roster, onClose, onEnroll }) {
+  const [vaId, setVaId] = useState(roster[0]?.id || "");
+  const [courseId, setCourseId] = useState(courses[0]?.course_id || "");
+  const sel = { width: "100%", padding: "9px 11px", borderRadius: 8, border: `1px solid ${C.line}`, fontSize: 12.5, fontFamily: FONT.body, marginBottom: 14, background: "#fff" };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(27,18,11,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 70 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: "24px 26px", width: 400, maxWidth: "92vw", fontFamily: FONT.body }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: C.ink, marginBottom: 14 }}>Enroll a VA</div>
+        <div style={{ fontSize: 10.5, color: C.sub, marginBottom: 5 }}>Virtual assistant</div>
+        <select value={vaId} onChange={(e) => setVaId(e.target.value)} style={sel}>{roster.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
+        <div style={{ fontSize: 10.5, color: C.sub, marginBottom: 5 }}>Course</div>
+        {courses.length ? <select value={courseId} onChange={(e) => setCourseId(e.target.value)} style={sel}>{courses.map((c) => <option key={c.course_id} value={c.course_id}>{c.name}</option>)}</select>
+          : <div style={{ fontSize: 12, color: C.sub, marginBottom: 14 }}>No courses on this track yet. Add one in the Catalog.</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button onClick={onClose} style={btn.ghost}>Cancel</button>
+          <button disabled={!vaId || !courseId} onClick={() => onEnroll(vaId, courses.find((c) => c.course_id === courseId))} style={{ ...btn.primary, opacity: vaId && courseId ? 1 : 0.4 }}>Enroll</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Dashboard (real counts) ----------------
+function Dashboard({ supabase }) {
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const head = { count: "exact", head: true };
+      const [vAll, vActive, vCert, courses, enr] = await Promise.all([
+        supabase.from("vas").select("employee_id", head),
+        supabase.from("vas").select("employee_id", head).eq("status", "active"),
+        supabase.from("vas").select("employee_id", head).eq("certified", true),
+        supabase.from("courses").select("course_id", head),
+        supabase.from("enrollments").select("enrollment_id", head),
+      ]);
+      if (alive) setStats({
+        total: vAll.count || 0, deployed: vActive.count || 0, certified: vCert.count || 0,
+        courses: courses.count || 0, enrollments: enr.count || 0,
+        inTraining: (vAll.count || 0) - (vActive.count || 0),
+      });
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
+
+  const cards = stats ? [
+    { label: "Total VAs", value: stats.total },
+    { label: "In training", value: stats.inTraining },
+    { label: "Deployed", value: stats.deployed },
+    { label: "Certified", value: stats.certified },
+    { label: "Courses", value: stats.courses },
+    { label: "Enrollments", value: stats.enrollments },
+  ] : [];
+
+  return (
+    <div>
+      {!stats ? <div style={{ color: C.sub, fontSize: 13, padding: 20 }}>Loading…</div> : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
+          {cards.map((c) => (
+            <div key={c.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "18px 20px" }}>
+              <div style={{ fontSize: 28, fontWeight: 800, color: C.ink, fontFamily: FONT.head }}>{c.value}</div>
+              <div style={{ fontSize: 11.5, color: C.sub, marginTop: 4 }}>{c.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: "#bbb", marginTop: 16 }}>Enroll VAs from the CRM / Insurance / Broad track tabs; progress rolls up here.</div>
+    </div>
+  );
+}
+
 // ---------------- Root ----------------
 export default function TrainingApp({ session, supabase }) {
   const me = session?.employee;
@@ -510,6 +732,10 @@ export default function TrainingApp({ session, supabase }) {
         <div style={{ padding: "22px 32px 48px" }}>
           {nav === "catalog" ? <Catalog supabase={supabase} me={me} />
             : nav === "directory" ? <Directory supabase={supabase} me={me} />
+            : nav === "dashboard" ? <Dashboard supabase={supabase} />
+            : nav === "crm" ? <TrackView supabase={supabase} me={me} track="crm" blurb="Combo build track. CRM development courses and per-module progress." />
+            : nav === "insurance" ? <TrackView supabase={supabase} me={me} track="ins" blurb="Insurance training for gen and handed-off combo VAs." />
+            : nav === "broad" ? <TrackView supabase={supabase} me={me} track="broad" blurb="Broad market training: onboarding, security, AMS and other one-off courses." />
             : <Placeholder title={title} />}
         </div>
       </div>
