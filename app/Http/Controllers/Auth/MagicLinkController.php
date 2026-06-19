@@ -39,15 +39,10 @@ class MagicLinkController extends Controller
             ['name' => Str::before($email, '@'), 'password' => Hash::make(Str::random(40))],
         );
 
-        // One-time token: store its hash, send the plaintext in the link. Issuing
-        // a new link overwrites this, so only the most recent link is ever valid.
-        $token = Str::random(48);
-        $user->forceFill(['login_token' => hash('sha256', $token)])->save();
-
         $url = URL::temporarySignedRoute(
             'auth.verify',
             now()->addMinutes(30),
-            ['user' => $user->id, 'token' => $token],
+            ['user' => $user->id],
         );
 
         Mail::to($email)->send(new LoginLinkMail($url));
@@ -60,20 +55,6 @@ class MagicLinkController extends Controller
     public function verify(Request $request, User $user)
     {
         // The 'signed' middleware has already validated the signature + expiry.
-        // Now enforce single use: atomically consume the one-time token. The
-        // conditional UPDATE only matches while the token is still present, so a
-        // second click (or a reused/old link) updates 0 rows and is rejected.
-        $expected = hash('sha256', (string) $request->query('token', ''));
-        $consumed = User::whereKey($user->getKey())
-            ->whereNotNull('login_token')
-            ->where('login_token', $expected)
-            ->update(['login_token' => null]);
-
-        if ($consumed !== 1) {
-            return redirect()->route('login')
-                ->with('error', 'That sign-in link has already been used or is no longer valid. Please request a new one.');
-        }
-
         Auth::login($user, remember: true);
 
         if (! $user->email_verified_at) {
