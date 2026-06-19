@@ -8,7 +8,7 @@
 // only to the shell above and the database below. Keep this file small; a change
 // here affects everyone, which is the one shared single point of failure.
 import React, { Suspense } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { APPS } from './apps/registry';
 import { useSession } from './lib/useSession';
 import { supabase } from './lib/supabase';
@@ -66,6 +66,10 @@ function SidePanel({ employee, onSignOut }) {
 
 function AppArea({ session }) {
   const location = useLocation();
+  // The shell owns routing; apps receive a navigate() so they can link to other
+  // apps (e.g. the Portal sidebar jumping to /dev-support) without importing the
+  // router themselves.
+  const navigate = useNavigate();
   return (
     <main style={{ flex: 1, height: '100vh', overflow: 'auto', background: B.white }}>
       <Routes>
@@ -78,8 +82,8 @@ function AppArea({ session }) {
               element={
                 <AppErrorBoundary appName={app.label} routeKey={location.pathname}>
                   <Suspense fallback={<div style={{ padding: 40, fontFamily: 'Poppins, sans-serif', color: '#777' }}>Loading {app.label}…</div>}>
-                    {/* Apps receive identity and the client from the shell. */}
-                    <Comp session={session} supabase={supabase} />
+                    {/* Apps receive identity, the client, and navigate from the shell. */}
+                    <Comp session={session} supabase={supabase} navigate={navigate} />
                   </Suspense>
                 </AppErrorBoundary>
               }

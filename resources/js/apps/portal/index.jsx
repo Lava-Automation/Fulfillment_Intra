@@ -1892,7 +1892,7 @@ function ComingSoonPage({ title, icon, desc }) {
 // ─────────────────────────────────────────────
 //  ROOT APP
 // ─────────────────────────────────────────────
-export default function App({ session, supabase }) {
+export default function App({ session, supabase, navigate }) {
   const me = session?.employee || null;
   const [page, setPage] = useState('dashboard');
   const [openAcctId, setOpenAcctId] = useState(null);
@@ -1943,7 +1943,10 @@ export default function App({ session, supabase }) {
   const PAGE_LABELS = { dashboard:'Dashboard', accounts:'Accounts', vaoverview:'VA Overview', lavatrainers:'LAVA Trainers', tickets:'Support Tickets', meetings:'Meeting Requests', comms:'Send Communication', docs:'LAVA Docs', incident:'Incident / Postmortem', brainsignals:'Brain Signals Composer', qalog:'QA Defect Log', crmcurriculum:'CRM Training Curriculum' };
   const SB_ITEMS = [
     { section:'Fulfillment Overview', items:[{page:'dashboard',label:'Dashboard',icon:'◈'},{page:'accounts',label:'Accounts',icon:'⬡',badge:12},{page:'vaoverview',label:'VA Overview',icon:'◉'}] },
-    { section:'Dev Support', items:[{page:'lavatrainers',label:'LAVA Trainers',icon:'◆'},{page:'tickets',label:'Support Tickets',icon:'◎',badge:5},{page:'meetings',label:'Meeting Requests',icon:'◷',badge:3}] },
+    // Support Tickets is replaced by the standalone Dev Support app; QAQC gets
+    // its own button. Both jump to their own routes via the shell's navigate().
+    // LAVA Trainers and Meeting Requests stay as Portal pages for now.
+    { section:'Dev Support', items:[{page:'lavatrainers',label:'LAVA Trainers',icon:'◆'},{route:'/dev-support',label:'Dev Support',icon:'◎'},{route:'/qaqc',label:'QAQC',icon:'◳'},{page:'meetings',label:'Meeting Requests',icon:'◷',badge:3}] },
     { section:'Tools', items:[{page:'incident',label:'Incident / Postmortem',icon:'◌'},{page:'brainsignals',label:'Brain Signals Composer',icon:'◍'},{page:'qalog',label:'QA Defect Log',icon:'◎'},{page:'crmcurriculum',label:'CRM Training Curriculum',icon:'◧'}] },
     { section:'Team', items:[{page:'comms',label:'Send Communication',icon:'◫'},{page:'docs',label:'LAVA Docs',icon:'◈'}] },
   ];
@@ -1964,7 +1967,7 @@ export default function App({ session, supabase }) {
             <div key={section.section}>
               <div style={{ ...fm, fontSize:9, letterSpacing:3, color:'#383835', textTransform:'uppercase', padding:'16px 20px 5px' }}>{section.section}</div>
               {section.items.map(item => (
-                <button key={item.page} className={`sb-btn${page===item.page&&!openAcctId?' on':''}`} onClick={() => navTo(item.page)}>
+                <button key={item.page || item.route} className={`sb-btn${item.page && page===item.page && !openAcctId?' on':''}`} onClick={() => item.route ? navigate(item.route) : navTo(item.page)}>
                   <span style={{ fontSize:13, width:18, textAlign:'center', flexShrink:0 }}>{item.icon}</span>
                   {item.label}
                   {item.badge && <span style={{ marginLeft:'auto', background:T.lava, color:'#fff', ...fm, fontSize:9, padding:'2px 6px', minWidth:18, textAlign:'center' }}>{item.badge}</span>}
@@ -1993,7 +1996,6 @@ export default function App({ session, supabase }) {
             {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
             {page === 'vaoverview'     && <VAOverviewPage supabase={supabase} />}
             {page === 'lavatrainers'   && <LAVATrainersPage supabase={supabase} />}
-            {page === 'tickets'        && <TicketsPage supabase={supabase} />}
             {page === 'meetings'       && <MeetingsPage session={session} supabase={supabase} />}
             {page === 'comms'          && <CommsPage />}
             {page === 'docs'           && <DocsPage />}
