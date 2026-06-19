@@ -1,5 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, lazy, Suspense } from "react";
 import { logActivity } from "../../lib/activity";
+
+// Other apps embedded as Portal pages. The Portal is becoming the host shell, so
+// Dev Support and QAQC render INSIDE the Portal content area (not a reroute).
+// Lazy so each still compiles into its own chunk and only loads on its page.
+const DevSupportApp = lazy(() => import("../devSupport/index.jsx"));
+const QAQCApp = lazy(() => import("../qaqc/index.jsx"));
 
 // ─────────────────────────────────────────────
 //  THEME TOKENS
@@ -1940,13 +1946,13 @@ export default function App({ session, supabase, navigate }) {
   const navTo = (p) => { setPage(p); setOpenAcctId(null); setOpenAcctTab(null); };
   const openAcct = (id, tab) => { setOpenAcctId(id); setOpenAcctTab(tab || null); setPage('accounts'); };
 
-  const PAGE_LABELS = { dashboard:'Dashboard', accounts:'Accounts', vaoverview:'VA Overview', lavatrainers:'LAVA Trainers', tickets:'Support Tickets', meetings:'Meeting Requests', comms:'Send Communication', docs:'LAVA Docs', incident:'Incident / Postmortem', brainsignals:'Brain Signals Composer', qalog:'QA Defect Log', crmcurriculum:'CRM Training Curriculum' };
+  const PAGE_LABELS = { dashboard:'Dashboard', accounts:'Accounts', vaoverview:'VA Overview', lavatrainers:'LAVA Trainers', devsupport:'Dev Support', qaqc:'QAQC', meetings:'Meeting Requests', comms:'Send Communication', docs:'LAVA Docs', incident:'Incident / Postmortem', brainsignals:'Brain Signals Composer', qalog:'QA Defect Log', crmcurriculum:'CRM Training Curriculum' };
   const SB_ITEMS = [
     { section:'Fulfillment Overview', items:[{page:'dashboard',label:'Dashboard',icon:'◈'},{page:'accounts',label:'Accounts',icon:'⬡',badge:12},{page:'vaoverview',label:'VA Overview',icon:'◉'}] },
-    // Support Tickets is replaced by the standalone Dev Support app; QAQC gets
-    // its own button. Both jump to their own routes via the shell's navigate().
-    // LAVA Trainers and Meeting Requests stay as Portal pages for now.
-    { section:'Dev Support', items:[{page:'lavatrainers',label:'LAVA Trainers',icon:'◆'},{route:'/dev-support',label:'Dev Support',icon:'◎'},{route:'/qaqc',label:'QAQC',icon:'◳'},{page:'meetings',label:'Meeting Requests',icon:'◷',badge:3}] },
+    // Dev Support (replacing the old Support Tickets) and QAQC render as Portal
+    // pages, embedded in the content area. LAVA Trainers and Meeting Requests
+    // stay as Portal pages too.
+    { section:'Dev Support', items:[{page:'lavatrainers',label:'LAVA Trainers',icon:'◆'},{page:'devsupport',label:'Dev Support',icon:'◎'},{page:'qaqc',label:'QAQC',icon:'◳'},{page:'meetings',label:'Meeting Requests',icon:'◷',badge:3}] },
     { section:'Tools', items:[{page:'incident',label:'Incident / Postmortem',icon:'◌'},{page:'brainsignals',label:'Brain Signals Composer',icon:'◍'},{page:'qalog',label:'QA Defect Log',icon:'◎'},{page:'crmcurriculum',label:'CRM Training Curriculum',icon:'◧'}] },
     { section:'Team', items:[{page:'comms',label:'Send Communication',icon:'◫'},{page:'docs',label:'LAVA Docs',icon:'◈'}] },
   ];
@@ -1967,7 +1973,7 @@ export default function App({ session, supabase, navigate }) {
             <div key={section.section}>
               <div style={{ ...fm, fontSize:9, letterSpacing:3, color:'#383835', textTransform:'uppercase', padding:'16px 20px 5px' }}>{section.section}</div>
               {section.items.map(item => (
-                <button key={item.page || item.route} className={`sb-btn${item.page && page===item.page && !openAcctId?' on':''}`} onClick={() => item.route ? navigate(item.route) : navTo(item.page)}>
+                <button key={item.page} className={`sb-btn${page===item.page && !openAcctId?' on':''}`} onClick={() => navTo(item.page)}>
                   <span style={{ fontSize:13, width:18, textAlign:'center', flexShrink:0 }}>{item.icon}</span>
                   {item.label}
                   {item.badge && <span style={{ marginLeft:'auto', background:T.lava, color:'#fff', ...fm, fontSize:9, padding:'2px 6px', minWidth:18, textAlign:'center' }}>{item.badge}</span>}
@@ -1990,7 +1996,9 @@ export default function App({ session, supabase, navigate }) {
           <div style={{ background:T.surface, borderBottom:`1px solid ${T.border}`, padding:'0 24px', height:50, display:'flex', alignItems:'center', position:'sticky', top:0, zIndex:40 }}>
             <div style={{ ...fm, fontSize:11, color:T.ink3 }}>LAVA Internal / <strong style={{ color:T.ink }}>{topTitle}</strong></div>
           </div>
-          <div style={{ flex:1, padding:24 }}>
+          <div style={{ flex:1, padding: (page === 'devsupport' || page === 'qaqc') ? 0 : 24, minWidth:0 }}>
+            {page === 'devsupport'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Dev Support…</div>}><DevSupportApp session={session} supabase={supabase} /></Suspense>}
+            {page === 'qaqc'        && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading QAQC…</div>}><QAQCApp session={session} supabase={supabase} /></Suspense>}
             {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} supabase={supabase} />}
             {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
             {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
