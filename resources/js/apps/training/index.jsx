@@ -20,7 +20,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   LayoutDashboard, Code, Shield, Radio, Contact, BookMarked, BarChart3,
   Settings as SettingsIcon, Plus, Pencil, Trash2, ChevronUp, ChevronDown,
-  ArrowLeft, BadgeCheck, Search,
+  ArrowLeft, BadgeCheck, Search, LayoutGrid, List, X,
 } from "lucide-react";
 import { logActivity } from "../../lib/activity";
 
@@ -312,6 +312,183 @@ function Field({ label, children }) {
   );
 }
 
+// ---------------- Directory (wired to vas + employees) ----------------
+const ini = (n) => (n || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+const AV_COLORS = [C.red, C.teal, C.ink, "#5b3b9c", "#0c6b5e", "#a8650f"];
+const VA_STATUS = { onboarding: ["Onboarding", "#fdf0dd", "#a8650f"], training: ["In Training", "#e1f0f5", "#0c447c"], active: ["Deployed", "#e1f5ee", "#0f6e56"] };
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
+
+function VAStatusPill({ status }) {
+  const [lbl, bg, fg] = VA_STATUS[status] || [status || "—", "#eef0f2", C.sub];
+  return <span style={{ background: bg, color: fg, fontSize: 10, fontWeight: 600, padding: "3px 9px", borderRadius: 20, whiteSpace: "nowrap" }}>{lbl}</span>;
+}
+function TypePill({ type }) {
+  const combo = type === "combo";
+  return <span style={{ background: combo ? "#fce8e8" : "#e1f0f5", color: combo ? "#a32d2d" : "#0c447c", fontSize: 9, fontWeight: 600, padding: "2px 7px", borderRadius: 20 }}>{combo ? "Combo" : "Gen"}</span>;
+}
+
+function Directory({ supabase, me }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("all");
+  const [view, setView] = useState("card");
+  const [q, setQ] = useState("");
+  const [openVA, setOpenVA] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      const [vRes, eRes, aRes] = await Promise.all([
+        supabase.from("vas").select("employee_id,account_id,title,type,status,dev_trainer_id,ins_trainer_id,certified,started_at,skills,bio,mods_done,mods_total,task_comp,tasks_run"),
+        supabase.from("employees").select("id,name,position"),
+        supabase.from("accounts").select("account_id,hubspot_company_id"),
+      ]);
+      const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
+      const accs = aRes.data || [];
+      const compIds = [...new Set(accs.map((a) => a.hubspot_company_id).filter(Boolean))];
+      let compName = {};
+      if (compIds.length) {
+        const { data: cs } = await supabase.from("hubspot_companies").select("id,name").in("id", compIds);
+        compName = Object.fromEntries((cs || []).map((c) => [c.id, c.name]));
+      }
+      const acctName = Object.fromEntries(accs.map((a) => [a.account_id, compName[a.hubspot_company_id] || "—"]));
+      const list = (vRes.data || []).map((v) => ({
+        ...v,
+        name: emp[v.employee_id] || "Unknown",
+        agency: v.account_id ? (acctName[v.account_id] || "—") : "—",
+        devTrainer: emp[v.dev_trainer_id] || null,
+        insTrainer: emp[v.ins_trainer_id] || null,
+      })).sort((a, b) => a.name.localeCompare(b.name));
+      if (alive) { setRows(list); setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
+
+  const term = q.toLowerCase();
+  const list = rows.filter((t) => {
+    if (status !== "all" && t.status !== status) return false;
+    if (term && !t.name.toLowerCase().includes(term) && !(t.agency || "").toLowerCase().includes(term)) return false;
+    return true;
+  });
+
+  const tabs = [["all", "All"], ["onboarding", "Onboarding"], ["training", "In Training"], ["active", "Deployed"]];
+  const tab = (k, lbl) => {
+    const on = status === k;
+    return <button key={k} onClick={() => setStatus(k)} style={{ border: "none", background: on ? C.ink : "transparent", color: on ? "#fff" : C.sub, fontSize: 12, fontWeight: 600, padding: "7px 13px", borderRadius: 8, cursor: "pointer", fontFamily: FONT.body }}>{lbl}</button>;
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 4, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 10, padding: 4 }}>{tabs.map(([k, l]) => tab(k, l))}</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 11px" }}>
+            <Search size={14} color={C.sub} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search VA or agency…" style={{ border: "none", outline: "none", fontSize: 12, fontFamily: FONT.body, background: "transparent", width: 180 }} />
+          </div>
+          <div style={{ display: "flex", gap: 2, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: 3 }}>
+            {[["card", LayoutGrid], ["list", List]].map(([k, Icon]) => (
+              <button key={k} onClick={() => setView(k)} style={{ border: "none", background: view === k ? "#e6eef1" : "transparent", color: view === k ? C.teal : C.sub, padding: "6px 9px", borderRadius: 6, cursor: "pointer", display: "flex" }}><Icon size={15} /></button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {loading ? <div style={{ color: C.sub, fontSize: 13, padding: 20 }}>Loading VAs…</div>
+        : list.length === 0 ? <div style={{ padding: 24, color: C.sub, fontSize: 13, background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 12 }}>No VAs match.</div>
+        : view === "list" ? (
+          <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "40px 1.6fr 1.1fr 1fr 0.9fr 0.9fr", gap: 10, padding: "10px 16px", fontSize: 10, color: C.sub, textTransform: "uppercase", letterSpacing: "0.5px", borderBottom: `1px solid ${C.line}` }}>
+              <span /><span>VA / Agency</span><span>Dev trainer</span><span>Ins trainer</span><span>Status</span><span>Started</span>
+            </div>
+            {list.map((t, i) => (
+              <div key={t.employee_id} onClick={() => setOpenVA(t)} style={{ display: "grid", gridTemplateColumns: "40px 1.6fr 1.1fr 1fr 0.9fr 0.9fr", gap: 10, padding: "11px 16px", alignItems: "center", borderBottom: `1px solid ${C.line}`, cursor: "pointer" }}>
+                <div style={{ background: AV_COLORS[i % AV_COLORS.length], width: 24, height: 24, borderRadius: "50%", color: "#fff", fontSize: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>{ini(t.name)}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: C.ink, display: "flex", alignItems: "center", gap: 5 }}>{t.name} <TypePill type={t.type} /></div>
+                  <div style={{ fontSize: 10.5, color: C.sub }}>{t.agency}</div>
+                </div>
+                <div style={{ fontSize: 11.5, color: C.sub }}>{t.devTrainer || "—"}</div>
+                <div style={{ fontSize: 11.5, color: C.sub }}>{t.insTrainer || "—"}</div>
+                <div><VAStatusPill status={t.status} /></div>
+                <div style={{ fontSize: 11.5, color: C.sub }}>{fmtDate(t.started_at)}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))", gap: 14 }}>
+            {list.map((t, i) => (
+              <div key={t.employee_id} onClick={() => setOpenVA(t)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, cursor: "pointer" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                  <div style={{ background: AV_COLORS[i % AV_COLORS.length], width: 32, height: 32, borderRadius: "50%", color: "#fff", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{ini(t.name)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.ink, display: "flex", alignItems: "center", gap: 6 }}>{t.name} <TypePill type={t.type} /></div>
+                    <div style={{ fontSize: 11, color: C.sub }}>{t.agency}</div>
+                  </div>
+                  <VAStatusPill status={t.status} />
+                </div>
+                <div style={{ fontSize: 9, color: C.sub, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 6 }}>Skills</div>
+                {(t.skills && t.skills.length) ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {t.skills.map((s, j) => <span key={j} style={{ background: "#eef0f2", color: "#555", fontSize: 9.5, padding: "3px 8px", borderRadius: 20 }}>{s}</span>)}
+                  </div>
+                ) : <span style={{ fontSize: 10, color: "#ccc" }}>No skills tagged yet</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+      {openVA && <VADrawer t={openVA} onClose={() => setOpenVA(null)} />}
+    </div>
+  );
+}
+
+function VADrawer({ t, onClose }) {
+  const modPct = t.mods_total ? Math.round((100 * (t.mods_done || 0)) / t.mods_total) : null;
+  const Row = ({ label, value }) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 12, padding: "7px 0" }}>
+      <span style={{ width: 130, flexShrink: 0, fontSize: 12, color: C.sub }}>{label}</span>
+      <span style={{ fontSize: 13, color: C.ink, fontWeight: 500 }}>{value ?? "—"}</span>
+    </div>
+  );
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(27,18,11,0.4)", zIndex: 60, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 460, maxWidth: "100vw", height: "100%", background: "#fff", overflowY: "auto", display: "flex", flexDirection: "column" }}>
+        <div style={{ background: C.ink, padding: "20px 24px", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ background: C.teal, width: 40, height: 40, borderRadius: "50%", color: "#fff", fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>{ini(t.name)}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 7 }}>{t.name} <TypePill type={t.type} /></div>
+            <div style={{ fontSize: 11.5, color: "rgba(255,255,255,0.6)" }}>{t.title || "VA"} · {t.agency}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "rgba(255,255,255,0.1)", border: "none", color: "#fff", width: 28, height: 28, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={16} /></button>
+        </div>
+        <div style={{ padding: "18px 24px", flex: 1 }}>
+          <div style={{ marginBottom: 8 }}><VAStatusPill status={t.status} />{t.certified && <span style={{ marginLeft: 8, display: "inline-flex", alignItems: "center", gap: 3, background: "#e1f5ee", color: "#0f6e56", fontSize: 10, fontWeight: 600, padding: "3px 8px", borderRadius: 20 }}><BadgeCheck size={11} /> Certified</span>}</div>
+          {t.bio && <div style={{ fontSize: 13, color: C.sub, lineHeight: 1.6, margin: "10px 0 14px" }}>{t.bio}</div>}
+          <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 8, paddingTop: 8 }}>
+            <Row label="Dev trainer" value={t.devTrainer} />
+            <Row label="Insurance trainer" value={t.insTrainer} />
+            <Row label="Started" value={fmtDate(t.started_at)} />
+            <Row label="Modules done" value={t.mods_total ? `${t.mods_done || 0} / ${t.mods_total}${modPct != null ? ` (${modPct}%)` : ""}` : "—"} />
+            <Row label="Task completion" value={t.task_comp != null ? `${t.task_comp}%` : "—"} />
+            <Row label="Tasks run" value={t.tasks_run != null ? String(t.tasks_run) : "—"} />
+          </div>
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 9.5, color: C.sub, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Skills</div>
+            {(t.skills && t.skills.length) ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {t.skills.map((s, j) => <span key={j} style={{ background: "#eef0f2", color: "#555", fontSize: 11, padding: "4px 10px", borderRadius: 20 }}>{s}</span>)}
+              </div>
+            ) : <span style={{ fontSize: 12, color: "#ccc" }}>No skills tagged yet.</span>}
+          </div>
+          <div style={{ fontSize: 10, color: "#bbb", marginTop: 18, lineHeight: 1.5 }}>Enrollments and per-module progress show here once the training tracks are wired (next pass).</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------- Root ----------------
 export default function TrainingApp({ session, supabase }) {
   const me = session?.employee;
@@ -331,7 +508,9 @@ export default function TrainingApp({ session, supabase }) {
           <p style={{ margin: "6px 0 0 17px", fontSize: 12.5, color: C.sub }}>{sub}</p>
         </div>
         <div style={{ padding: "22px 32px 48px" }}>
-          {nav === "catalog" ? <Catalog supabase={supabase} me={me} /> : <Placeholder title={title} />}
+          {nav === "catalog" ? <Catalog supabase={supabase} me={me} />
+            : nav === "directory" ? <Directory supabase={supabase} me={me} />
+            : <Placeholder title={title} />}
         </div>
       </div>
     </div>
