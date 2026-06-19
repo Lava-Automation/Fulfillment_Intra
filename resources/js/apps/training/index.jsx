@@ -327,47 +327,87 @@ function TypePill({ type }) {
   return <span style={{ background: combo ? "#fce8e8" : "#e1f0f5", color: combo ? "#a32d2d" : "#0c447c", fontSize: 9, fontWeight: 600, padding: "2px 7px", borderRadius: 20 }}>{combo ? "Combo" : "Gen"}</span>;
 }
 
-function Directory({ supabase, me }) {
+// Shared: load the enriched VA roster (vas + employee names + agency + trainers).
+async function loadVARoster(supabase) {
+  const [vRes, eRes, aRes] = await Promise.all([
+    supabase.from("vas").select("employee_id,account_id,title,type,status,dev_trainer_id,ins_trainer_id,certified,started_at,skills,bio,mods_done,mods_total,task_comp,tasks_run"),
+    supabase.from("employees").select("id,name,position"),
+    supabase.from("accounts").select("account_id,hubspot_company_id"),
+  ]);
+  const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
+  const accs = aRes.data || [];
+  const compIds = [...new Set(accs.map((a) => a.hubspot_company_id).filter(Boolean))];
+  let compName = {};
+  if (compIds.length) {
+    const { data: cs } = await supabase.from("hubspot_companies").select("id,name").in("id", compIds);
+    compName = Object.fromEntries((cs || []).map((c) => [c.id, c.name]));
+  }
+  const acctName = Object.fromEntries(accs.map((a) => [a.account_id, compName[a.hubspot_company_id] || "—"]));
+  return (vRes.data || []).map((v) => ({
+    ...v,
+    name: emp[v.employee_id] || "Unknown",
+    agency: v.account_id ? (acctName[v.account_id] || "—") : "—",
+    devTrainer: emp[v.dev_trainer_id] || null,
+    insTrainer: emp[v.ins_trainer_id] || null,
+  })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Header global search: find any VA from anywhere, open its drawer in place.
+function GlobalSearch({ supabase, me, catalog }) {
+  const [roster, setRoster] = useState([]);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [sel, setSel] = useState(null);
+  useEffect(() => { let alive = true; loadVARoster(supabase).then((r) => alive && setRoster(r)); return () => { alive = false; }; }, [supabase]);
+  const term = q.trim().toLowerCase();
+  const results = term ? roster.filter((r) => r.name.toLowerCase().includes(term) || (r.agency || "").toLowerCase().includes(term)).slice(0, 8) : [];
+  return (
+    <div style={{ position: "relative", width: 260 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 11px" }}>
+        <Search size={14} color={C.sub} />
+        <input value={q} onChange={(e) => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)}
+          placeholder="Search any VA…" style={{ border: "none", outline: "none", fontSize: 12, fontFamily: FONT.body, background: "transparent", width: "100%" }} />
+      </div>
+      {open && term && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, boxShadow: "0 12px 30px rgba(0,0,0,0.12)", zIndex: 50, maxHeight: 320, overflowY: "auto" }}>
+          {results.length === 0 ? <div style={{ padding: "10px 12px", fontSize: 12, color: C.sub }}>No VA matches.</div>
+            : results.map((r) => (
+              <div key={r.employee_id} onMouseDown={() => { setSel(r); setOpen(false); setQ(""); }} style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 12px", cursor: "pointer", borderBottom: `1px solid ${C.line}` }}>
+                <div style={{ background: AV_COLORS[r.name.charCodeAt(0) % AV_COLORS.length], width: 24, height: 24, borderRadius: "50%", color: "#fff", fontSize: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center" }}>{ini(r.name)}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: C.ink }}>{r.name}</div>
+                  <div style={{ fontSize: 10.5, color: C.sub }}>{r.agency}</div>
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+      {sel && <VADrawer t={sel} supabase={supabase} me={me} catalog={catalog} onClose={() => setSel(null)} />}
+    </div>
+  );
+}
+
+function Directory({ supabase, me, catalog }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("all");
   const [view, setView] = useState("card");
   const [q, setQ] = useState("");
+  const [skill, setSkill] = useState("all");
   const [openVA, setOpenVA] = useState(null);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoading(true);
-      const [vRes, eRes, aRes] = await Promise.all([
-        supabase.from("vas").select("employee_id,account_id,title,type,status,dev_trainer_id,ins_trainer_id,certified,started_at,skills,bio,mods_done,mods_total,task_comp,tasks_run"),
-        supabase.from("employees").select("id,name,position"),
-        supabase.from("accounts").select("account_id,hubspot_company_id"),
-      ]);
-      const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
-      const accs = aRes.data || [];
-      const compIds = [...new Set(accs.map((a) => a.hubspot_company_id).filter(Boolean))];
-      let compName = {};
-      if (compIds.length) {
-        const { data: cs } = await supabase.from("hubspot_companies").select("id,name").in("id", compIds);
-        compName = Object.fromEntries((cs || []).map((c) => [c.id, c.name]));
-      }
-      const acctName = Object.fromEntries(accs.map((a) => [a.account_id, compName[a.hubspot_company_id] || "—"]));
-      const list = (vRes.data || []).map((v) => ({
-        ...v,
-        name: emp[v.employee_id] || "Unknown",
-        agency: v.account_id ? (acctName[v.account_id] || "—") : "—",
-        devTrainer: emp[v.dev_trainer_id] || null,
-        insTrainer: emp[v.ins_trainer_id] || null,
-      })).sort((a, b) => a.name.localeCompare(b.name));
-      if (alive) { setRows(list); setLoading(false); }
-    })();
-    return () => { alive = false; };
+  const load = useCallback(async () => {
+    setLoading(true);
+    const list = await loadVARoster(supabase);
+    setRows(list); setLoading(false);
   }, [supabase]);
+  useEffect(() => { load(); }, [load]);
 
+  const skillOptions = [...new Set((catalog || []).map((c) => c.name))].sort();
   const term = q.toLowerCase();
   const list = rows.filter((t) => {
     if (status !== "all" && t.status !== status) return false;
+    if (skill !== "all" && !(t.skills || []).includes(skill)) return false;
     if (term && !t.name.toLowerCase().includes(term) && !(t.agency || "").toLowerCase().includes(term)) return false;
     return true;
   });
@@ -387,6 +427,10 @@ function Directory({ supabase, me }) {
             <Search size={14} color={C.sub} />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search VA or agency…" style={{ border: "none", outline: "none", fontSize: 12, fontFamily: FONT.body, background: "transparent", width: 180 }} />
           </div>
+          <select value={skill} onChange={(e) => setSkill(e.target.value)} style={{ border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 9px", fontSize: 12, fontFamily: FONT.body, background: "#fff", color: C.ink }}>
+            <option value="all">All skills</option>
+            {skillOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
           <div style={{ display: "flex", gap: 2, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: 3 }}>
             {[["card", LayoutGrid], ["list", List]].map(([k, Icon]) => (
               <button key={k} onClick={() => setView(k)} style={{ border: "none", background: view === k ? "#e6eef1" : "transparent", color: view === k ? C.teal : C.sub, padding: "6px 9px", borderRadius: 6, cursor: "pointer", display: "flex" }}><Icon size={15} /></button>
@@ -439,13 +483,26 @@ function Directory({ supabase, me }) {
           </div>
         )}
 
-      {openVA && <VADrawer t={openVA} onClose={() => setOpenVA(null)} />}
+      {openVA && <VADrawer t={openVA} supabase={supabase} me={me} catalog={catalog} onClose={() => setOpenVA(null)} onChanged={load} />}
     </div>
   );
 }
 
-function VADrawer({ t, onClose }) {
+function VADrawer({ t, supabase, me, catalog, onClose, onChanged }) {
+  const [skills, setSkills] = useState(t.skills || []);
   const modPct = t.mods_total ? Math.round((100 * (t.mods_done || 0)) / t.mods_total) : null;
+  const available = [...new Set((catalog || []).map((c) => c.name))].filter((n) => !skills.includes(n)).sort();
+
+  async function saveSkills(next, verb, name) {
+    const { error } = await supabase.from("vas").update({ skills: next }).eq("employee_id", t.employee_id);
+    if (error) { alert("Could not update skills: " + error.message); return; }
+    setSkills(next);
+    await logActivity({ app: "training", actor: me, action: `training.va.skill_${verb}`, entityType: "va", entityId: t.employee_id, details: { skill: name } });
+    onChanged && onChanged();
+  }
+  const addSkill = (name) => { if (name && !skills.includes(name)) saveSkills([...skills, name], "added", name); };
+  const removeSkill = (name) => saveSkills(skills.filter((s) => s !== name), "removed", name);
+
   const Row = ({ label, value }) => (
     <div style={{ display: "flex", alignItems: "baseline", gap: 12, padding: "7px 0" }}>
       <span style={{ width: 130, flexShrink: 0, fontSize: 12, color: C.sub }}>{label}</span>
@@ -476,13 +533,21 @@ function VADrawer({ t, onClose }) {
           </div>
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 9.5, color: C.sub, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Skills</div>
-            {(t.skills && t.skills.length) ? (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {t.skills.map((s, j) => <span key={j} style={{ background: "#eef0f2", color: "#555", fontSize: 11, padding: "4px 10px", borderRadius: 20 }}>{s}</span>)}
-              </div>
-            ) : <span style={{ fontSize: 12, color: "#ccc" }}>No skills tagged yet.</span>}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {skills.length ? skills.map((s, j) => (
+                <span key={j} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef0f2", color: "#555", fontSize: 11, padding: "4px 7px 4px 10px", borderRadius: 20 }}>
+                  {s}
+                  <button onClick={() => removeSkill(s)} title="Remove" style={{ background: "none", border: "none", cursor: "pointer", color: "#999", display: "flex", padding: 0 }}><X size={12} /></button>
+                </span>
+              )) : <span style={{ fontSize: 12, color: "#ccc" }}>No skills tagged yet.</span>}
+            </div>
+            {available.length > 0 && (
+              <select value="" onChange={(e) => { if (e.target.value) addSkill(e.target.value); }} style={{ border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 9px", fontSize: 12, fontFamily: FONT.body, background: "#fff", color: C.ink }}>
+                <option value="">+ Add skill…</option>
+                {available.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            )}
           </div>
-          <div style={{ fontSize: 10, color: "#bbb", marginTop: 18, lineHeight: 1.5 }}>Enrollments and per-module progress show here once the training tracks are wired (next pass).</div>
         </div>
       </div>
     </div>
@@ -711,31 +776,164 @@ function Dashboard({ supabase }) {
   );
 }
 
+// ---------------- Settings (skills catalog manager) ----------------
+function Settings({ supabase, me, catalog, reload }) {
+  const [adding, setAdding] = useState({});   // per-category inline input text
+  const [newCat, setNewCat] = useState("");
+  const [newCatSkill, setNewCatSkill] = useState("");
+
+  const byCat = {};
+  (catalog || []).forEach((c) => { (byCat[c.category] = byCat[c.category] || []).push(c); });
+  const cats = Object.keys(byCat).sort();
+
+  const log = (action, details) => logActivity({ app: "training", actor: me, action, entityType: "skill", entityId: details?.name, details });
+
+  async function addSkill(category, name) {
+    const n = (name || "").trim(); if (!n) return;
+    if ((byCat[category] || []).some((s) => s.name.toLowerCase() === n.toLowerCase())) { alert(`"${n}" already exists in ${category}.`); return; }
+    const { error } = await supabase.from("skills_catalog").insert({ category, name: n });
+    if (error) { alert("Could not add skill: " + error.message); return; }
+    await log("training.skill.added", { category, name: n }); reload();
+  }
+  async function removeSkill(s) {
+    const { error } = await supabase.from("skills_catalog").delete().eq("skill_id", s.skill_id);
+    if (error) { alert("Could not remove skill: " + error.message); return; }
+    await log("training.skill.removed", { category: s.category, name: s.name }); reload();
+  }
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.5, marginBottom: 16 }}>The skills directory governs which skills can be granted to VAs (in the Directory) and what the Has-skill filter offers. Removing a skill stops it being offered; it does not strip it from VAs who already have it.</div>
+
+      {cats.map((cat) => (
+        <div key={cat} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.ink, marginBottom: 10 }}>{cat}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 10 }}>
+            {byCat[cat].sort((a, b) => a.name.localeCompare(b.name)).map((s) => (
+              <span key={s.skill_id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#eef0f2", color: "#555", fontSize: 11.5, padding: "4px 7px 4px 11px", borderRadius: 20 }}>
+                {s.name}
+                <button onClick={() => removeSkill(s)} title="Remove" style={{ background: "none", border: "none", cursor: "pointer", color: "#999", display: "flex", padding: 0 }}><X size={12} /></button>
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input value={adding[cat] || ""} onChange={(e) => setAdding((p) => ({ ...p, [cat]: e.target.value }))} placeholder={`Add a ${cat} skill…`}
+              onKeyDown={(e) => { if (e.key === "Enter") { addSkill(cat, adding[cat]); setAdding((p) => ({ ...p, [cat]: "" })); } }}
+              style={{ ...input, flex: 1, maxWidth: 280 }} />
+            <button onClick={() => { addSkill(cat, adding[cat]); setAdding((p) => ({ ...p, [cat]: "" })); }} style={btn.add}><Plus size={12} /> Add</button>
+          </div>
+        </div>
+      ))}
+
+      <div style={{ background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 12, padding: "14px 16px" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.sub, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>New category</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <input value={newCat} onChange={(e) => setNewCat(e.target.value)} placeholder="Category (e.g. Automation)" style={{ ...input, flex: 1, maxWidth: 220 }} />
+          <input value={newCatSkill} onChange={(e) => setNewCatSkill(e.target.value)} placeholder="First skill" style={{ ...input, flex: 1, maxWidth: 220 }} />
+          <button onClick={() => { if (newCat.trim() && newCatSkill.trim()) { addSkill(newCat.trim(), newCatSkill); setNewCat(""); setNewCatSkill(""); } else alert("Enter a category and a first skill."); }} style={btn.primary}><Plus size={12} /> Add category</button>
+        </div>
+        <div style={{ fontSize: 10, color: "#bbb", marginTop: 8 }}>A category is created by adding its first skill.</div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Reports (real metrics) ----------------
+function Reports({ supabase }) {
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const head = { count: "exact", head: true };
+      const [vCert, enrAll, enrDone, evRes, cRes, enrCourse] = await Promise.all([
+        supabase.from("vas").select("employee_id", head).eq("certified", true),
+        supabase.from("enrollments").select("enrollment_id", head),
+        supabase.from("enrollments").select("enrollment_id", head).eq("completed", true),
+        supabase.from("evaluations").select("rating"),
+        supabase.from("courses").select("course_id,name"),
+        supabase.from("enrollments").select("course_id"),
+      ]);
+      const ratings = (evRes.data || []).map((e) => e.rating).filter((r) => r != null);
+      const avg = ratings.length ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : "—";
+      const courseName = Object.fromEntries((cRes.data || []).map((c) => [c.course_id, c.name]));
+      const perCourse = {};
+      (enrCourse.data || []).forEach((e) => { perCourse[e.course_id] = (perCourse[e.course_id] || 0) + 1; });
+      const courseRows = Object.entries(perCourse).map(([id, n]) => ({ name: courseName[id] || "—", n })).sort((a, b) => b.n - a.n);
+      if (alive) setD({
+        cards: [
+          { label: "Certified VAs", value: vCert.count || 0 },
+          { label: "Enrollments", value: enrAll.count || 0 },
+          { label: "Completed", value: enrDone.count || 0 },
+          { label: "Evaluations", value: ratings.length },
+          { label: "Avg rating", value: avg },
+        ],
+        courseRows,
+      });
+    })();
+    return () => { alive = false; };
+  }, [supabase]);
+
+  if (!d) return <div style={{ color: C.sub, fontSize: 13, padding: 20 }}>Loading…</div>;
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 14, marginBottom: 22 }}>
+        {d.cards.map((c) => (
+          <div key={c.label} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "18px 20px" }}>
+            <div style={{ fontSize: 28, fontWeight: 800, color: C.ink, fontFamily: FONT.head }}>{c.value}</div>
+            <div style={{ fontSize: 11.5, color: C.sub, marginTop: 4 }}>{c.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.sub, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Enrollments by course</div>
+      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
+        {d.courseRows.length ? d.courseRows.map((r, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 16px", borderBottom: i < d.courseRows.length - 1 ? `1px solid ${C.line}` : "none" }}>
+            <span style={{ fontSize: 12.5, color: C.ink }}>{r.name}</span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: C.teal }}>{r.n}</span>
+          </div>
+        )) : <div style={{ padding: 20, fontSize: 13, color: C.sub }}>No enrollments yet.</div>}
+      </div>
+    </div>
+  );
+}
+
 // ---------------- Root ----------------
 export default function TrainingApp({ session, supabase }) {
   const me = session?.employee;
   const [nav, setNav] = useState("catalog");
+  const [catalog, setCatalog] = useState([]);
   const [title, sub] = PAGE_META[nav] || ["", ""];
+
+  const loadCatalog = useCallback(async () => {
+    const { data } = await supabase.from("skills_catalog").select("skill_id,category,name");
+    setCatalog(data || []);
+  }, [supabase]);
+  useEffect(() => { loadCatalog(); }, [loadCatalog]);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: C.paper, fontFamily: FONT.body, color: C.ink }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');`}</style>
       <Sidebar nav={nav} setNav={setNav} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ padding: "26px 32px 0" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 7, height: 26, background: C.red, borderRadius: 2 }} />
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", fontFamily: FONT.head }}>{title}</h1>
+        <div style={{ padding: "26px 32px 0", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 7, height: 26, background: C.red, borderRadius: 2 }} />
+              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", fontFamily: FONT.head }}>{title}</h1>
+            </div>
+            <p style={{ margin: "6px 0 0 17px", fontSize: 12.5, color: C.sub }}>{sub}</p>
           </div>
-          <p style={{ margin: "6px 0 0 17px", fontSize: 12.5, color: C.sub }}>{sub}</p>
+          <GlobalSearch supabase={supabase} me={me} catalog={catalog} />
         </div>
         <div style={{ padding: "22px 32px 48px" }}>
           {nav === "catalog" ? <Catalog supabase={supabase} me={me} />
-            : nav === "directory" ? <Directory supabase={supabase} me={me} />
+            : nav === "directory" ? <Directory supabase={supabase} me={me} catalog={catalog} />
             : nav === "dashboard" ? <Dashboard supabase={supabase} />
             : nav === "crm" ? <TrackView supabase={supabase} me={me} track="crm" blurb="Combo build track. CRM development courses and per-module progress." />
             : nav === "insurance" ? <TrackView supabase={supabase} me={me} track="ins" blurb="Insurance training for gen and handed-off combo VAs." />
             : nav === "broad" ? <TrackView supabase={supabase} me={me} track="broad" blurb="Broad market training: onboarding, security, AMS and other one-off courses." />
+            : nav === "reports" ? <Reports supabase={supabase} />
+            : nav === "settings" ? <Settings supabase={supabase} me={me} catalog={catalog} reload={loadCatalog} />
             : <Placeholder title={title} />}
         </div>
       </div>
