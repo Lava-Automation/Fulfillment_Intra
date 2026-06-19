@@ -3,29 +3,30 @@
  * App namespace: qa
  *
  * Replaces the QAQC.xlsx spreadsheet. Each row is an agency build a VA completed
- * and QA reviews against a checklist. This is the hub version: the original
- * static BUILDS array, hardcoded CURRENT_USER, and console activity-log stub are
- * swapped for Supabase reads/writes and the shell session, per the CLAUDE.md
- * playbook. The screen the author designed is intact; only the data source
- * underneath changed.
+ * and QA reviews against a checklist. The data layer now lives in Laravel
+ * (QaqcController): this file fetches /api/qaqc and mutates via /api/qaqc/*
+ * through lib/api instead of querying Supabase. Identity comes from the shell
+ * session and the activity_log writes happen server-side. Everything below the
+ * data calls is the screen the author designed, unchanged.
  *
- * Reads:   public.builds joined to public.accounts -> spine.hubspot_companies
- *          (agency name) and public.employees (VA / QA / PM names).
- * Writes:  builds.* updates + an activity_log insert on every change
+ * Reads:   /api/qaqc — builds, accounts (agency name joined server-side from
+ *          hubspot companies), employees (VA / QA / PM names), va ids.
+ * Writes:  /api/qaqc/builds (insert) + /api/qaqc/builds/* patches; the controller
+ *          does the DB write and the activity_log insert on every change
  *          (qa.build.logged | status_changed | field_changed | updated).
  *
  * Schema note: builds carries single-uuid FKs (va_id, qa_reviewer_id, pm_id), so
- * names render from spine.employees and edits write the UUID back. The QA team is
- * resolved from the employee data by role (Kristel Joyce Asuncion and Josiah
+ * names render from the employee data and edits write the UUID back. The QA team
+ * is resolved from the employee data by role (Kristel Joyce Asuncion and Josiah
  * "Siah" Hannen Lera are the two QA/QC people), not from hardcoded names. The
- * sheet's combined "Kristel, Siah" reviewer is two distinct people; because
- * qa_reviewer_id is a single column, a build records one reviewer for now
- * (open: add a second reviewer column if the team needs both). client_name /
- * im_link / on_time_override were added to builds to preserve the sheet's fields.
+ * sheet's combined "Kristel, Siah" reviewer is two distinct people; the full set
+ * lives in qa_reviewer_ids (uuid[]) while qa_reviewer_id keeps the first for
+ * single-column reads. client_name / im_link / on_time_override were added to
+ * builds to preserve the sheet's fields.
  */
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { logActivity } from "../../lib/activity";
+import { api } from "../../lib/api";
 
 // --- COLOR CONSTANTS (B) ----------------------------------------------------
 const B = {
@@ -49,13 +50,6 @@ const FONT_FACE_CSS = `
 // --- WORKFLOW VOCAB (from the sheet, not invented) --------------------------
 const STATUSES = ["Done", "Working On It", "Waiting on Client", "Pending"];
 const CRMS     = ["Agency Zoom", "Insured Mine"];
-
-// --- ACTIVITY LOG -----------------------------------------------------------
-// Append-only audit, namespaced qa.build.<verb>. Real insert via the shared
-// helper; actor is the signed-in employee from the shell session.
-function logBuild(me, action, entityId, details) {
-  return logActivity({ app: "qa", actor: me, action, entityType: "build", entityId, details });
-}
 
 // --- HELPERS ----------------------------------------------------------------
 const initials = (name) => (name || "?").split(" ").map(w => w[0]).filter(Boolean).join("").slice(0, 2).toUpperCase();
@@ -499,25 +493,22 @@ export default function QAQCTracker({ session, supabase }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [bRes, aRes, eRes, vRes] = await Promise.all([
-      supabase.from("builds").select("build_id,account_id,va_id,qa_reviewer_id,qa_reviewer_ids,pm_id,crm,status,issues,date_start,date_finish,checklist_url,pending_url,im_link,client_name,on_time_override").order("date_start", { ascending: false }),
-      supabase.from("accounts").select("account_id,hubspot_company_id,pm_id"),
-      supabase.from("employees").select("id,name,position"),
-      supabase.from("vas").select("employee_id"),
-    ]);
-
-    const empRows = eRes.data || [];
-    const emp = new Map(empRows.map(e => [e.id, e.name]));
-    const accs = aRes.data || [];
-    const compIds = [...new Set(accs.map(a => a.hubspot_company_id).filter(Boolean))];
-    let compName = {};
-    if (compIds.length) {
-      const { data: cs } = await supabase.from("hubspot_companies").select("id,name").in("id", compIds);
-      compName = Object.fromEntries((cs || []).map(c => [c.id, c.name]));
+    let data;
+    try {
+      data = await api.get("/api/qaqc");
+    } catch (e) {
+      alert("Could not load builds: " + e.message);
+      setLoading(false);
+      return;
     }
-    const acctName = new Map(accs.map(a => [a.account_id, compName[a.hubspot_company_id] || "(no agency)"]));
 
-    const rows = (bRes.data || []).map(b => ({
+    const empRows = data.employees || [];
+    const emp = new Map(empRows.map(e => [e.id, e.name]));
+    const accs = data.accounts || [];
+    // Agency name is joined server-side and returned on each account.
+    const acctName = new Map(accs.map(a => [a.account_id, a.agency || "(no agency)"]));
+
+    const rows = (data.builds || []).map(b => ({
       id: b.build_id,
       account_id: b.account_id,
       agency: acctName.get(b.account_id) || "(no agency)",
@@ -548,11 +539,11 @@ export default function QAQCTracker({ session, supabase }) {
 
     setPmOptions(pmIds.map(toOpt).filter(o => o.name).sort(sortByName));
     setQaOptions(qaIds.map(toOpt).filter(o => o.name).sort(sortByName));
-    setVaOptions((vRes.data || []).map(v => toOpt(v.employee_id)).filter(o => o.name).sort(sortByName));
+    setVaOptions((data.vaIds || []).map(id => toOpt(id)).filter(o => o.name).sort(sortByName));
     setAccounts(accs.map(a => ({ id: a.account_id, name: acctName.get(a.account_id) })).filter(o => o.name).sort(sortByName));
     setBuilds(rows);
     setLoading(false);
-  }, [supabase, me]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -576,40 +567,26 @@ export default function QAQCTracker({ session, supabase }) {
     return true;
   }), [builds, statusFilter, crmFilter, pmFilter, qaFilter, search]);
 
-  // --- writes (Supabase update + activity_log, then refetch) ----------------
+  // --- writes (Laravel via lib/api; controller writes DB + activity_log) ----
   async function handleStatus(id, status) {
-    const b = builds.find(x => x.id === id);
-    const patch = { status };
-    if (status === "Done" && !b?.date_finish) patch.date_finish = new Date().toISOString().slice(0, 10);
-    const { error } = await supabase.from("builds").update(patch).eq("build_id", id);
-    if (error) { alert("Could not update status: " + error.message); return; }
-    await logBuild(me, "qa.build.status_changed", id, { to: status });
-    load();
+    try { await api.patch(`/api/qaqc/builds/${id}/status`, { status }); load(); }
+    catch (e) { alert("Could not update status: " + e.message); }
   }
 
   // Inline field edits from the table row (CRM, PM, On Time).
   async function handleField(id, field, value) {
-    const colMap = { crm: "crm", project_mgr: "pm_id", on_time_override: "on_time_override" };
-    const col = colMap[field];
-    if (!col) return;
-    let dbval = value;
-    if (field === "project_mgr") dbval = pmIdByName[value] ?? null;
-    const { error } = await supabase.from("builds").update({ [col]: dbval }).eq("build_id", id);
-    if (error) { alert("Could not update: " + error.message); return; }
-    await logBuild(me, "qa.build.field_changed", id, { field, to: value });
-    load();
+    if (!["crm", "project_mgr", "on_time_override"].includes(field)) return;
+    // For PM, send the UUID; otherwise the literal value. `label` is logged as-is.
+    const out = field === "project_mgr" ? (pmIdByName[value] ?? null) : value;
+    try { await api.patch(`/api/qaqc/builds/${id}/field`, { field, value: out, label: value }); load(); }
+    catch (e) { alert("Could not update: " + e.message); }
   }
 
-  // QA reviewers are multi-valued. Write the full uuid[] and keep the legacy
-  // qa_reviewer_id in sync (= first reviewer) so single-column reads still work.
+  // QA reviewers are multi-valued. The controller writes the full uuid[] and
+  // keeps the legacy qa_reviewer_id in sync (= first reviewer).
   async function handleReviewers(id, reviewerIds) {
-    const { error } = await supabase.from("builds")
-      .update({ qa_reviewer_ids: reviewerIds, qa_reviewer_id: reviewerIds[0] ?? null })
-      .eq("build_id", id);
-    if (error) { alert("Could not update reviewers: " + error.message); return; }
-    const names = qaOptions.filter(o => reviewerIds.includes(o.id)).map(o => o.name);
-    await logBuild(me, "qa.build.field_changed", id, { field: "qa_reviewers", to: names });
-    load();
+    try { await api.patch(`/api/qaqc/builds/${id}/reviewers`, { qa_ids: reviewerIds }); load(); }
+    catch (e) { alert("Could not update reviewers: " + e.message); }
   }
 
   // Full save from the drawer — every editable field at once.
@@ -618,8 +595,7 @@ export default function QAQCTracker({ session, supabase }) {
       client_name: form.client_name || null,
       crm: form.crm || null,
       pm_id: pmIdByName[form.project_mgr] ?? null,
-      qa_reviewer_ids: form.qa_ids || [],
-      qa_reviewer_id: (form.qa_ids && form.qa_ids[0]) || null,
+      qa_ids: form.qa_ids || [],
       va_id: vaIdByName[form.va_name] ?? null,
       issues: form.issues || null,
       status: form.status,
@@ -629,31 +605,28 @@ export default function QAQCTracker({ session, supabase }) {
       pending_url: form.pending_url || null,
       im_link: form.im_link || null,
       on_time_override: form.on_time_override || null,
+      agency: form.agency,
     };
-    if (patch.status === "Done" && !patch.date_finish) patch.date_finish = new Date().toISOString().slice(0, 10);
-    const { error } = await supabase.from("builds").update(patch).eq("build_id", id);
-    if (error) { alert("Could not save build: " + error.message); return; }
-    await logBuild(me, "qa.build.updated", id, { agency: form.agency });
-    load();
+    try { await api.patch(`/api/qaqc/builds/${id}`, patch); load(); }
+    catch (e) { alert("Could not save build: " + e.message); }
   }
 
   async function handleNew(f) {
     const ins = {
       account_id: acctIdByName[f.account] || null,
       va_id: vaIdByName[f.va_name] ?? null,
-      qa_reviewer_ids: f.qa_ids || [],
-      qa_reviewer_id: (f.qa_ids && f.qa_ids[0]) || null,
+      qa_ids: f.qa_ids || [],
       pm_id: pmIdByName[f.project_mgr] ?? null,
       crm: f.crm,
       status: f.status,
       client_name: f.client_name || null,
-      issues: "",
       date_start: f.date_start || null,
+      agency: f.account,
+      va_name: f.va_name,
+      pm_name: f.project_mgr,
     };
-    const { data, error } = await supabase.from("builds").insert(ins).select("build_id").maybeSingle();
-    if (error) { alert("Could not add build: " + error.message); return; }
-    await logBuild(me, "qa.build.logged", data?.build_id, { agency: f.account, va: f.va_name, pm: f.project_mgr });
-    load();
+    try { await api.post("/api/qaqc/builds", ins); load(); }
+    catch (e) { alert("Could not add build: " + e.message); }
   }
 
   const selectStyle = { padding: "6px 10px", border: "1.5px solid #D0D0DC", borderRadius: 8, fontFamily: FONT_BODY, fontSize: 11, color: B.dark, background: B.white, outline: "none", cursor: "pointer" };

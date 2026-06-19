@@ -1,19 +1,20 @@
 /**
- * Lava Client Profile (Company 360) — translated for the hub. Pass 1.
+ * Lava Client Profile (Company 360) — frontend only.
  *
- * The teammate's app was a single hardcoded client (Steele) with mock data.
- * Here it is account-driven and wired to Supabase per the CLAUDE.md playbook.
- * The root takes an optional `accountId`: standalone now it shows an accounts
- * list -> profile; later the Portal mounts it with the selected company and it
- * becomes the company detail view (one-line mount, no rewrite).
+ * Data layer now lives in Laravel (ClientProfileController). This file no longer
+ * talks to Supabase or writes the activity log; it fetches /api/client-profiles
+ * and mutates via /api/client-profiles/* through lib/api. Identity comes from the
+ * shell session. The root takes an optional `accountId`: standalone it shows an
+ * accounts list -> profile; the Portal can mount it with a selected company.
  *
- * Pass 1 wires Overview, General, Meetings, Timeline, and People (deployed VAs)
- * to real tables; Tech stack is read-only for now (editing + catalog in a later
- * pass); Reporting is "Coming Soon" (a separate app feeds it later). No mock
- * data: sections read the schema and sit empty until rows exist.
+ * Wires Overview, General, Meetings, Timeline, and People (deployed VAs) to real
+ * tables; tech tools edit per-account; Reporting is "Coming Soon". Sections sit
+ * empty until rows exist.
  *
- * Reads: accounts (+ hubspot_companies), employees, vas, meetings, goals,
- *        projects, action_items, timeline_events.
+ * Reads: /api/client-profiles (accounts + employees + companies) and
+ *        /api/client-profiles/{account} (account + company + employees + vas +
+ *        meetings + goals + projects + action_items + timeline_events +
+ *        account_team).
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -23,7 +24,7 @@ import {
   X, Plus,
 } from "lucide-react";
 // Plus is used by the People add picker.
-import { logActivity } from "../../lib/activity";
+import { api } from "../../lib/api";
 
 // Brand floor.
 const B = { red: "#E73835", darkBlue: "#24242D", teal: "#145365", white: "#FFFFFF", black: "#1B120B" };
@@ -127,30 +128,25 @@ function AccountsList({ supabase, onOpen }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [aRes, eRes] = await Promise.all([
-        supabase.from("accounts").select("account_id,plan,stage,cs_status,fulfillment,pm_id,hubspot_company_id"),
-        supabase.from("employees").select("id,name"),
-      ]);
-      const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
-      const accs = aRes.data || [];
-      const compIds = [...new Set(accs.map((a) => a.hubspot_company_id).filter(Boolean))];
-      let compName = {};
-      if (compIds.length) {
-        const { data: cs } = await supabase.from("hubspot_companies").select("id,name").in("id", compIds);
-        compName = Object.fromEntries((cs || []).map((c) => [c.id, c.name]));
+      try {
+        const data = await api.get("/api/client-profiles");
+        const emp = Object.fromEntries((data.employees || []).map((e) => [e.id, e.name]));
+        const compName = Object.fromEntries((data.companies || []).map((c) => [c.id, c.name]));
+        const list = (data.accounts || []).map((a) => ({
+          id: a.account_id,
+          name: compName[a.hubspot_company_id] || "(no agency)",
+          pm: emp[a.pm_id] || "—",
+          product: a.plan || "—",
+          stage: a.stage || "—",
+          cs: a.cs_status || "—",
+        })).sort((x, y) => x.name.localeCompare(y.name));
+        if (alive) { setRows(list); setLoading(false); }
+      } catch (e) {
+        if (alive) { alert("Could not load accounts: " + e.message); setLoading(false); }
       }
-      const list = accs.map((a) => ({
-        id: a.account_id,
-        name: compName[a.hubspot_company_id] || "(no agency)",
-        pm: emp[a.pm_id] || "—",
-        product: a.plan || "—",
-        stage: a.stage || "—",
-        cs: a.cs_status || "—",
-      })).sort((x, y) => x.name.localeCompare(y.name));
-      if (alive) { setRows(list); setLoading(false); }
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
 
   const colHead = { ...DISPLAY, fontSize: 10, color: N.faint };
   return (
@@ -537,39 +533,26 @@ function TimelineTab({ d }) {
 
 // -- Profile (loads one account's 360) ---------------------------------------
 function Profile({ supabase, session, accountId, onBack }) {
-  const me = session?.employee;
   const [d, setD] = useState(null);
   const [tab, setTab] = useState("Overview");
   const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
     setError(null);
-    const { data: account, error: aErr } = await supabase
-      .from("accounts")
-      .select("account_id,plan,crm,ams,stage,service_status,fulfillment,cs_status,pm_id,since_date,cancel_date,hubspot_company_id,va_start_date,go_live_date,support_through,decision_due_date,ad_hoc_prepaid,tech_tools")
-      .eq("account_id", accountId)
-      .maybeSingle();
-    if (aErr) { setError(aErr.message); return; }
+    let payload;
+    try {
+      payload = await api.get(`/api/client-profiles/${accountId}`);
+    } catch (e) { setError(e.message); return; }
+
+    const account = payload.account;
     if (!account) { setError("Account not found."); return; }
 
-    const [cRes, eRes, vRes, mRes, gRes, pRes, aiRes, tRes, teamRes] = await Promise.all([
-      account.hubspot_company_id ? supabase.from("hubspot_companies").select("name").eq("id", account.hubspot_company_id).maybeSingle() : Promise.resolve({ data: null }),
-      supabase.from("employees").select("id,name"),
-      supabase.from("vas").select("employee_id,account_id,title,status"), // full roster; assigned set derived below
-      supabase.from("meetings").select("meeting_id,type,title,status,meeting_date,rating,notes").eq("account_id", accountId).order("meeting_date", { ascending: false }),
-      supabase.from("goals").select("goal_id,title,status,quarter,owner_id").eq("account_id", accountId),
-      supabase.from("projects").select("project_id,name,status,progress_pct").eq("account_id", accountId),
-      supabase.from("action_items").select("action_item_id,body,owner_id,due_date,status").eq("account_id", accountId).order("due_date", { ascending: true }),
-      supabase.from("timeline_events").select("timeline_event_id,event_date,label,detail,color").eq("account_id", accountId).order("event_date", { ascending: false }),
-      supabase.from("account_team").select("employee_id,role_group").eq("account_id", accountId),
-    ]);
-
-    const emps = eRes.data || [];
+    const emps = payload.employees || [];
     const empName = Object.fromEntries(emps.map((e) => [e.id, e.name]));
-    const vaRoster = vRes.data || [];
+    const vaRoster = payload.vas || [];
     setD({
       account,
-      name: cRes.data?.name || "(no agency)",
+      name: payload.company?.name || "(no agency)",
       product: account.plan,
       stage: account.stage,
       pm: empName[account.pm_id] || null,
@@ -577,49 +560,39 @@ function Profile({ supabase, session, accountId, onBack }) {
       allEmployees: emps.map((e) => ({ id: e.id, name: e.name })).sort((a, b) => a.name.localeCompare(b.name)),
       vaRoster,
       vas: vaRoster.filter((v) => v.account_id === accountId),
-      team: teamRes.data || [],
-      meetings: mRes.data || [],
-      goals: gRes.data || [],
-      projects: pRes.data || [],
-      actionItems: aiRes.data || [],
-      timeline: tRes.data || [],
+      team: payload.account_team || [],
+      meetings: payload.meetings || [],
+      goals: payload.goals || [],
+      projects: payload.projects || [],
+      actionItems: payload.action_items || [],
+      timeline: payload.timeline_events || [],
     });
-  }, [supabase, accountId]);
+  }, [accountId]);
 
   useEffect(() => { setD(null); load(); }, [load]);
 
   // -- People writes: vas.account_id for VAs, account_team for the Lava team --
   async function assignVA(employeeId) {
-    const { error: e } = await supabase.from("vas").update({ account_id: accountId }).eq("employee_id", employeeId);
-    if (e) { alert("Could not assign VA: " + e.message); return; }
-    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.va.assigned", entityType: "account", entityId: accountId, details: { va: d.empName[employeeId] } });
-    load();
+    try { await api.patch(`/api/client-profiles/${accountId}/va/assign`, { employee_id: employeeId }); load(); }
+    catch (e) { alert("Could not assign VA: " + e.message); }
   }
   async function removeVA(employeeId) {
-    const { error: e } = await supabase.from("vas").update({ account_id: null }).eq("employee_id", employeeId);
-    if (e) { alert("Could not remove VA: " + e.message); return; }
-    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.va.removed", entityType: "account", entityId: accountId, details: { va: d.empName[employeeId] } });
-    load();
+    try { await api.patch(`/api/client-profiles/${accountId}/va/remove`, { employee_id: employeeId }); load(); }
+    catch (e) { alert("Could not remove VA: " + e.message); }
   }
   async function assignTeam(employeeId, roleGroup) {
-    const { error: e } = await supabase.from("account_team").insert({ account_id: accountId, employee_id: employeeId, role_group: roleGroup });
-    if (e) { alert("Could not add to team: " + e.message); return; }
-    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.team.assigned", entityType: "account", entityId: accountId, details: { person: d.empName[employeeId], group: roleGroup } });
-    load();
+    try { await api.post(`/api/client-profiles/${accountId}/team`, { employee_id: employeeId, role_group: roleGroup }); load(); }
+    catch (e) { alert("Could not add to team: " + e.message); }
   }
   async function removeTeam(employeeId, roleGroup) {
-    const { error: e } = await supabase.from("account_team").delete().eq("account_id", accountId).eq("employee_id", employeeId).eq("role_group", roleGroup);
-    if (e) { alert("Could not remove from team: " + e.message); return; }
-    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.team.removed", entityType: "account", entityId: accountId, details: { person: d.empName[employeeId], group: roleGroup } });
-    load();
+    try { await api.del(`/api/client-profiles/${accountId}/team?employee_id=${encodeURIComponent(employeeId)}&role_group=${encodeURIComponent(roleGroup)}`); load(); }
+    catch (e) { alert("Could not remove from team: " + e.message); }
   }
 
   // -- Tech tools: per-account selection saved to accounts.tech_tools ----------
   async function saveTechTools(next) {
-    const { error: e } = await supabase.from("accounts").update({ tech_tools: next }).eq("account_id", accountId);
-    if (e) { alert("Could not save tech tools: " + e.message); return; }
-    await logActivity({ app: "clientprofile", actor: me, action: "clientprofile.techtools.updated", entityType: "account", entityId: accountId, details: { tools: next } });
-    load();
+    try { await api.patch(`/api/client-profiles/${accountId}/tech-tools`, { tech_tools: next }); load(); }
+    catch (e) { alert("Could not save tech tools: " + e.message); }
   }
 
   if (error) return <div style={{ padding: 28, color: B.red, fontFamily: FONT_BODY }}>Error: {error}</div>;

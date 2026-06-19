@@ -3,19 +3,19 @@
  * Owners: Loid Aringoy + Nassim Orabi.
  *
  * The pipeline board the team designed (4 status columns, SLA bars, priority,
- * theme toggle, detail drawer), wired to Supabase per the CLAUDE.md playbook:
- * static SEED_TICKETS -> public.tickets; hardcoded TEAM/CURRENT_USER -> the dev
- * support roster from spine.employees and the shell session; assign / status
- * changes write tickets.* and an activity_log row; the drawer's Activity feed
- * reads activity_log for the ticket.
+ * detail drawer). Data layer now lives in Laravel (DevSupportController): this
+ * file no longer talks to Supabase or writes the activity log directly. It
+ * fetches /api/devsupport and mutates via /api/devsupport/* through lib/api;
+ * the controller does the DB write + activity_log row. Identity comes from the
+ * shell session.
  *
  * Time: the original tracked fake "offsetMs" values; here SLA math runs off the
  * real created_at / resolved_at timestamps.
  *
- * Reads:  public.tickets joined to accounts -> hubspot_companies (client name),
- *         public.employees (assignee names + the assignable roster).
- * Writes: tickets.assigned_to / status / resolved_at + activity_log
- *         (devsupport.ticket.assigned | status_changed | resolved).
+ * Reads:  /api/devsupport (tickets + accounts -> hubspot_companies client name +
+ *         employees), /api/devsupport/tickets/{id}/activity (drawer feed).
+ * Writes: /api/devsupport/tickets[/{id}[/assign]] -> tickets.* + activity_log
+ *         (devsupport.ticket.assigned | status_changed | resolved | opened).
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -23,7 +23,7 @@ import {
   Search, Plus, X, Clock, AlertCircle, CheckCircle2, PauseCircle,
   ChevronRight, Circle
 } from 'lucide-react';
-import { logActivity } from '../../lib/activity';
+import { api } from '../../lib/api';
 
 // -- Brand floor + color theory ------------------------------------
 const RED = '#e73835';
@@ -498,24 +498,22 @@ function MetaField({ label, value, hint, T }) {
   );
 }
 
-function DetailDrawer({ ticket, now, onClose, onAssign, onStatusChange, T, team, empName, supabase }) {
+function DetailDrawer({ ticket, now, onClose, onAssign, onStatusChange, T, team, empName }) {
   const [activity, setActivity] = useState([]);
 
   useEffect(() => {
     if (!ticket) return;
     let alive = true;
     (async () => {
-      const { data } = await supabase
-        .from('activity_log')
-        .select('action,actor_email,details,created_at')
-        .eq('app', 'devsupport')
-        .eq('entity_type', 'ticket')
-        .eq('entity_id', String(ticket.id))
-        .order('created_at', { ascending: false });
-      if (alive) setActivity(data || []);
+      try {
+        const data = await api.get(`/api/devsupport/tickets/${ticket.id}/activity`);
+        if (alive) setActivity(data || []);
+      } catch {
+        if (alive) setActivity([]);
+      }
     })();
     return () => { alive = false; };
-  }, [supabase, ticket]);
+  }, [ticket]);
 
   if (!ticket) return null;
   const assigneeName = ticket.assignedTo ? empName[ticket.assignedTo] : null;
@@ -740,7 +738,7 @@ function NewTicketModal({ T, accounts, team, onClose, onSubmit }) {
 }
 
 // -- App -----------------------------------------------------------
-export default function DevSupportQueue({ session, supabase }) {
+export default function DevSupportQueue({ session }) {
   const me = session?.employee;
 
   const [tickets, setTickets] = useState([]);
@@ -760,52 +758,48 @@ export default function DevSupportQueue({ session, supabase }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [tRes, aRes, eRes] = await Promise.all([
-      supabase.from('tickets').select('ticket_id,account_id,title,description,priority,status,assigned_to,created_at,resolved_at').order('created_at', { ascending: false }),
-      supabase.from('accounts').select('account_id,hubspot_company_id'),
-      supabase.from('employees').select('id,name,position'),
-    ]);
+    try {
+      const data = await api.get('/api/devsupport');
 
-    const empRows = eRes.data || [];
-    const emp = Object.fromEntries(empRows.map(e => [e.id, e.name]));
-    const accs = aRes.data || [];
-    const compIds = [...new Set(accs.map(a => a.hubspot_company_id).filter(Boolean))];
-    let compName = {};
-    if (compIds.length) {
-      const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds);
-      compName = Object.fromEntries((cs || []).map(c => [c.id, c.name]));
+      const empRows = data.employees || [];
+      const emp = Object.fromEntries(empRows.map(e => [e.id, e.name]));
+      const accs = data.accounts || [];
+      const compName = Object.fromEntries((data.companies || []).map(c => [c.id, c.name]));
+      const acctName = Object.fromEntries(accs.map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
+
+      const rows = (data.tickets || []).map(t => ({
+        id: t.ticket_id,
+        displayId: 'TKT-' + String(t.ticket_id).slice(0, 4).toUpperCase(),
+        summary: t.title || '(untitled)',
+        detail: t.description || '',
+        client: acctName[t.account_id] || '—',
+        priority: t.priority || 'M',
+        status: t.status || 'open',
+        assignedTo: t.assigned_to,
+        createdAtMs: t.created_at ? Date.parse(t.created_at) : Date.now(),
+        resolvedAtMs: t.resolved_at ? Date.parse(t.resolved_at) : null,
+      }));
+
+      // Assignable roster = the dev support / QA team, resolved from employee data.
+      const teamList = empRows
+        .filter(e => /dev support|qa\/?qc/i.test(e.position || ''))
+        .map(e => ({ id: e.id, name: e.name, role: e.position }));
+
+      const acctList = accs
+        .map(a => ({ id: a.account_id, name: acctName[a.account_id] }))
+        .filter(o => o.name && o.name !== '—')
+        .sort((x, y) => x.name.localeCompare(y.name));
+
+      setEmpName(emp);
+      setTeam(teamList);
+      setAccounts(acctList);
+      setTickets(rows);
+    } catch (e) {
+      alert('Could not load queue: ' + e.message);
+    } finally {
+      setLoading(false);
     }
-    const acctName = Object.fromEntries(accs.map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
-
-    const rows = (tRes.data || []).map(t => ({
-      id: t.ticket_id,
-      displayId: 'TKT-' + String(t.ticket_id).slice(0, 4).toUpperCase(),
-      summary: t.title || '(untitled)',
-      detail: t.description || '',
-      client: acctName[t.account_id] || '—',
-      priority: t.priority || 'M',
-      status: t.status || 'open',
-      assignedTo: t.assigned_to,
-      createdAtMs: t.created_at ? Date.parse(t.created_at) : Date.now(),
-      resolvedAtMs: t.resolved_at ? Date.parse(t.resolved_at) : null,
-    }));
-
-    // Assignable roster = the dev support / QA team, resolved from employee data.
-    const teamList = empRows
-      .filter(e => /dev support|qa\/?qc/i.test(e.position || ''))
-      .map(e => ({ id: e.id, name: e.name, role: e.position }));
-
-    const acctList = accs
-      .map(a => ({ id: a.account_id, name: acctName[a.account_id] }))
-      .filter(o => o.name && o.name !== '—')
-      .sort((x, y) => x.name.localeCompare(y.name));
-
-    setEmpName(emp);
-    setTeam(teamList);
-    setAccounts(acctList);
-    setTickets(rows);
-    setLoading(false);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -844,51 +838,42 @@ export default function DevSupportQueue({ session, supabase }) {
 
   const selected = tickets.find(t => t.id === selectedId) || null;
 
-  // WRITE: optimistic local update -> Supabase update + activity_log insert.
+  // WRITE: optimistic local update -> Laravel (DB update + activity_log) via lib/api.
   async function handleAssign(ticketId, assigneeId) {
     setTickets(ts => ts.map(t => t.id === ticketId ? { ...t, assignedTo: assigneeId } : t));
-    const { error } = await supabase.from('tickets').update({ assigned_to: assigneeId }).eq('ticket_id', ticketId);
-    if (error) { alert('Assign failed: ' + error.message); load(); return; }
-    await logActivity({
-      app: 'devsupport', actor: me, action: 'devsupport.ticket.assigned',
-      entityType: 'ticket', entityId: ticketId, details: { to: empName[assigneeId] || assigneeId },
-    });
+    try {
+      await api.patch(`/api/devsupport/tickets/${ticketId}/assign`, { assigned_to: assigneeId });
+    } catch (e) {
+      alert('Assign failed: ' + e.message); load();
+    }
   }
 
   async function handleStatusChange(ticketId, newStatus) {
-    const prev = tickets.find(t => t.id === ticketId);
-    const patch = { status: newStatus };
-    if (newStatus === 'resolved') patch.resolved_at = new Date().toISOString();
     setTickets(ts => ts.map(t => t.id === ticketId
       ? { ...t, status: newStatus, resolvedAtMs: newStatus === 'resolved' ? (t.resolvedAtMs || now) : t.resolvedAtMs }
       : t));
-    const { error } = await supabase.from('tickets').update(patch).eq('ticket_id', ticketId);
-    if (error) { alert('Update failed: ' + error.message); load(); return; }
-    await logActivity({
-      app: 'devsupport', actor: me,
-      action: newStatus === 'resolved' ? 'devsupport.ticket.resolved' : 'devsupport.ticket.status_changed',
-      entityType: 'ticket', entityId: ticketId, details: { from: prev?.status, to: newStatus },
-    });
+    try {
+      await api.patch(`/api/devsupport/tickets/${ticketId}`, { status: newStatus });
+    } catch (e) {
+      alert('Update failed: ' + e.message); load();
+    }
   }
 
   // CREATE: insert a new ticket (status opens at 'open') + log the open.
   async function handleNew(form) {
-    const insert = {
-      title: form.title.trim(),
-      description: form.description.trim() || null,
-      account_id: form.account_id || null,
-      priority: form.priority,
-      status: 'open',
-      assigned_to: form.assigned_to || null,
-    };
-    const { data, error } = await supabase.from('tickets').insert(insert).select('ticket_id').maybeSingle();
-    if (error) { alert('Could not create ticket: ' + error.message); return; }
-    await logActivity({
-      app: 'devsupport', actor: me, action: 'devsupport.ticket.opened',
-      entityType: 'ticket', entityId: data?.ticket_id, details: { title: insert.title, priority: insert.priority },
-    });
-    setShowNew(false);
-    load();
+    try {
+      await api.post('/api/devsupport/tickets', {
+        title: form.title.trim(),
+        description: form.description.trim() || null,
+        account_id: form.account_id || null,
+        priority: form.priority,
+        assigned_to: form.assigned_to || null,
+      });
+      setShowNew(false);
+      load();
+    } catch (e) {
+      alert('Could not create ticket: ' + e.message);
+    }
   }
 
   return (
@@ -944,7 +929,7 @@ export default function DevSupportQueue({ session, supabase }) {
           <DetailDrawer
             ticket={selected} now={now} onClose={() => setSelectedId(null)}
             onAssign={handleAssign} onStatusChange={handleStatusChange}
-            T={T} team={team} empName={empName} supabase={supabase}
+            T={T} team={team} empName={empName}
           />
         </>
       )}

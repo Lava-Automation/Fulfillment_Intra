@@ -1,19 +1,12 @@
 /**
- * Lava Training Tracker — translated for the hub. Pass 1.
+ * Lava Training Tracker — frontend only.
  *
- * The teammate's app is a large multi-view tracker (Dashboard, CRM/Insurance/
- * Broad tracks, Directory, Catalog, Reports, Settings) built on an in-memory
- * CATALOG + mock trainee progress. Per the playbook + the user's direction:
- * the course catalog is genuine and now lives in the DB (courses/modules/lessons,
- * seeded from the app); mock trainee progress is left out (cleared) until real
- * enrollments exist.
- *
- * Pass 1 wires the Course Catalog to the real schema with structure-level CRUD
- * (create/edit/reorder/delete courses, modules, lessons). Deep lesson content
- * authoring (blocks, quizzes) has no schema home yet and is deferred. The other
- * views are placeholders wired in later passes.
- *
- * Reads/writes: public.courses / public.modules / public.lessons + activity_log.
+ * Data layer now lives in Laravel (TrainingController). This file no longer
+ * talks to Supabase or writes the activity log directly; it fetches
+ * /api/training/* and mutates via /api/training/* endpoints through lib/api.
+ * Identity comes from the shell session (display only). Everything below the
+ * data calls is pure UI — the markup/styling is unchanged from the Supabase
+ * version. The activity_log writes now happen server-side in the controller.
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -22,7 +15,7 @@ import {
   Settings as SettingsIcon, Plus, Pencil, Trash2, ChevronUp, ChevronDown,
   ArrowLeft, BadgeCheck, Search, LayoutGrid, List, X,
 } from "lucide-react";
-import { logActivity } from "../../lib/activity";
+import { api } from "../../lib/api";
 
 const C = {
   red: "#e73835", ink: "#24242d", teal: "#145365", white: "#ffffff", black: "#1b120b",
@@ -104,7 +97,7 @@ function Placeholder({ title }) {
 }
 
 // ---------------- Catalog (wired to courses/modules/lessons) ----------------
-function Catalog({ supabase, me }) {
+function Catalog() {
   const [courses, setCourses] = useState([]); // [{...course, modules:[{...module, lessons:[]}]}]
   const [loading, setLoading] = useState(true);
   const [editId, setEditId] = useState(null);
@@ -112,34 +105,33 @@ function Catalog({ supabase, me }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [cRes, mRes, lRes] = await Promise.all([
-      supabase.from("courses").select("course_id,name,category,description,cert").order("name", { ascending: true }),
-      supabase.from("modules").select("module_id,course_id,name,position").order("position", { ascending: true }),
-      supabase.from("lessons").select("lesson_id,module_id,name,position").order("position", { ascending: true }),
-    ]);
-    const lessonsByModule = {};
-    (lRes.data || []).forEach((l) => { (lessonsByModule[l.module_id] = lessonsByModule[l.module_id] || []).push(l); });
-    const modulesByCourse = {};
-    (mRes.data || []).forEach((m) => { (modulesByCourse[m.course_id] = modulesByCourse[m.course_id] || []).push({ ...m, lessons: lessonsByModule[m.module_id] || [] }); });
-    setCourses((cRes.data || []).map((c) => ({ ...c, modules: modulesByCourse[c.course_id] || [] })));
-    setLoading(false);
-  }, [supabase]);
+    try {
+      const data = await api.get("/api/training/catalog");
+      const lessonsByModule = {};
+      (data.lessons || []).forEach((l) => { (lessonsByModule[l.module_id] = lessonsByModule[l.module_id] || []).push(l); });
+      const modulesByCourse = {};
+      (data.modules || []).forEach((m) => { (modulesByCourse[m.course_id] = modulesByCourse[m.course_id] || []).push({ ...m, lessons: lessonsByModule[m.module_id] || [] }); });
+      setCourses((data.courses || []).map((c) => ({ ...c, modules: modulesByCourse[c.course_id] || [] })));
+    } catch (e) {
+      alert("Could not load catalog: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const log = (action, details) => logActivity({ app: "training", actor: me, action, entityType: "course", entityId: details?.id, details });
-
   async function createCourse() {
-    const { data, error } = await supabase.from("courses").insert({ name: "New course", category: "oneoff", cert: false }).select("course_id").maybeSingle();
-    if (error) { alert("Could not create course: " + error.message); return; }
-    await log("training.course.created", { id: data?.course_id });
-    await load();
-    setEditId(data?.course_id);
+    try {
+      const data = await api.post("/api/training/courses", { name: "New course", category: "oneoff", cert: false });
+      await load();
+      setEditId(data?.course_id);
+    } catch (e) { alert("Could not create course: " + e.message); }
   }
 
   if (editId) {
     const course = courses.find((c) => c.course_id === editId);
-    return <CourseEditor supabase={supabase} me={me} course={course} onBack={() => setEditId(null)} reload={load} />;
+    return <CourseEditor course={course} onBack={() => setEditId(null)} reload={load} />;
   }
 
   const q = search.trim().toLowerCase();
@@ -195,48 +187,42 @@ function Catalog({ supabase, me }) {
   );
 }
 
-function CourseEditor({ supabase, me, course, onBack, reload }) {
+function CourseEditor({ course, onBack, reload }) {
   const [showSettings, setShowSettings] = useState(false);
   if (!course) return <div style={{ padding: 20 }}>Course not found.</div>;
-  const log = (action, details) => logActivity({ app: "training", actor: me, action, entityType: "course", entityId: course.course_id, details });
   const lessonCount = course.modules.reduce((n, m) => n + m.lessons.length, 0);
 
   const setField = async (field, val) => {
-    const { error } = await supabase.from("courses").update({ [field]: val }).eq("course_id", course.course_id);
-    if (error) { alert("Save failed: " + error.message); return; }
-    await log("training.course.updated", { field }); reload();
+    try { await api.patch(`/api/training/courses/${course.course_id}`, { [field]: val }); reload(); }
+    catch (e) { alert("Save failed: " + e.message); }
   };
   const delCourse = async () => {
     if (!confirm(`Delete "${course.name}" and all its modules and lessons?`)) return;
-    const modIds = course.modules.map((m) => m.module_id);
-    if (modIds.length) await supabase.from("lessons").delete().in("module_id", modIds);
-    await supabase.from("modules").delete().eq("course_id", course.course_id);
-    const { error } = await supabase.from("courses").delete().eq("course_id", course.course_id);
-    if (error) { alert("Delete failed: " + error.message); return; }
-    await log("training.course.deleted", {}); onBack(); reload();
+    try { await api.del(`/api/training/courses/${course.course_id}`); onBack(); reload(); }
+    catch (e) { alert("Delete failed: " + e.message); }
   };
   const addModule = async () => {
-    const { error } = await supabase.from("modules").insert({ course_id: course.course_id, name: "New module", position: course.modules.length });
-    if (error) { alert("Add module failed: " + error.message); return; }
-    reload();
+    try { await api.post("/api/training/modules", { course_id: course.course_id, name: "New module", position: course.modules.length }); reload(); }
+    catch (e) { alert("Add module failed: " + e.message); }
   };
-  const renameModule = async (mid, name) => { await supabase.from("modules").update({ name }).eq("module_id", mid); reload(); };
+  const renameModule = async (mid, name) => { try { await api.patch(`/api/training/modules/${mid}`, { name }); reload(); } catch (e) { alert("Rename failed: " + e.message); } };
   const delModule = async (mid) => {
     if (!confirm("Delete this module and its lessons?")) return;
-    await supabase.from("lessons").delete().eq("module_id", mid);
-    await supabase.from("modules").delete().eq("module_id", mid); reload();
+    try { await api.del(`/api/training/modules/${mid}`); reload(); } catch (e) { alert("Delete failed: " + e.message); }
   };
-  const addLesson = async (mid, pos) => { await supabase.from("lessons").insert({ module_id: mid, name: "New lesson", position: pos }); reload(); };
-  const renameLesson = async (lid, name) => { await supabase.from("lessons").update({ name }).eq("lesson_id", lid); reload(); };
-  const delLesson = async (lid) => { await supabase.from("lessons").delete().eq("lesson_id", lid); reload(); };
+  const addLesson = async (mid, pos) => { try { await api.post("/api/training/lessons", { module_id: mid, name: "New lesson", position: pos }); reload(); } catch (e) { alert("Add lesson failed: " + e.message); } };
+  const renameLesson = async (lid, name) => { try { await api.patch(`/api/training/lessons/${lid}`, { name }); reload(); } catch (e) { alert("Rename failed: " + e.message); } };
+  const delLesson = async (lid) => { try { await api.del(`/api/training/lessons/${lid}`); reload(); } catch (e) { alert("Delete failed: " + e.message); } };
   // reorder by swapping positions of two rows
-  const swap = async (table, idCol, a, b) => {
-    await supabase.from(table).update({ position: b.position }).eq(idCol, a[idCol]);
-    await supabase.from(table).update({ position: a.position }).eq(idCol, b[idCol]);
-    reload();
+  const swap = async (kind, a, b) => {
+    try {
+      await api.patch(`/api/training/${kind}/${a[kind === "modules" ? "module_id" : "lesson_id"]}`, { position: b.position });
+      await api.patch(`/api/training/${kind}/${b[kind === "modules" ? "module_id" : "lesson_id"]}`, { position: a.position });
+      reload();
+    } catch (e) { alert("Reorder failed: " + e.message); }
   };
-  const moveModule = (i, dir) => { const j = i + dir; if (j < 0 || j >= course.modules.length) return; swap("modules", "module_id", course.modules[i], course.modules[j]); };
-  const moveLesson = (m, i, dir) => { const j = i + dir; if (j < 0 || j >= m.lessons.length) return; swap("lessons", "lesson_id", m.lessons[i], m.lessons[j]); };
+  const moveModule = (i, dir) => { const j = i + dir; if (j < 0 || j >= course.modules.length) return; swap("modules", course.modules[i], course.modules[j]); };
+  const moveLesson = (m, i, dir) => { const j = i + dir; if (j < 0 || j >= m.lessons.length) return; swap("lessons", m.lessons[i], m.lessons[j]); };
 
   return (
     <div>
@@ -328,22 +314,13 @@ function TypePill({ type }) {
 }
 
 // Shared: load the enriched VA roster (vas + employee names + agency + trainers).
-async function loadVARoster(supabase) {
-  const [vRes, eRes, aRes] = await Promise.all([
-    supabase.from("vas").select("employee_id,account_id,title,type,status,dev_trainer_id,ins_trainer_id,certified,started_at,skills,bio,mods_done,mods_total,task_comp,tasks_run"),
-    supabase.from("employees").select("id,name,position"),
-    supabase.from("accounts").select("account_id,hubspot_company_id"),
-  ]);
-  const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
-  const accs = aRes.data || [];
-  const compIds = [...new Set(accs.map((a) => a.hubspot_company_id).filter(Boolean))];
-  let compName = {};
-  if (compIds.length) {
-    const { data: cs } = await supabase.from("hubspot_companies").select("id,name").in("id", compIds);
-    compName = Object.fromEntries((cs || []).map((c) => [c.id, c.name]));
-  }
+async function loadVARoster() {
+  const data = await api.get("/api/training/va-roster");
+  const emp = Object.fromEntries((data.employees || []).map((e) => [e.id, e.name]));
+  const accs = data.accounts || [];
+  const compName = Object.fromEntries((data.companies || []).map((c) => [c.id, c.name]));
   const acctName = Object.fromEntries(accs.map((a) => [a.account_id, compName[a.hubspot_company_id] || "—"]));
-  return (vRes.data || []).map((v) => ({
+  return (data.vas || []).map((v) => ({
     ...v,
     name: emp[v.employee_id] || "Unknown",
     agency: v.account_id ? (acctName[v.account_id] || "—") : "—",
@@ -353,12 +330,12 @@ async function loadVARoster(supabase) {
 }
 
 // Header global search: find any VA from anywhere, open its drawer in place.
-function GlobalSearch({ supabase, me, catalog }) {
+function GlobalSearch({ catalog }) {
   const [roster, setRoster] = useState([]);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [sel, setSel] = useState(null);
-  useEffect(() => { let alive = true; loadVARoster(supabase).then((r) => alive && setRoster(r)); return () => { alive = false; }; }, [supabase]);
+  useEffect(() => { let alive = true; loadVARoster().then((r) => alive && setRoster(r)).catch(() => {}); return () => { alive = false; }; }, []);
   const term = q.trim().toLowerCase();
   const results = term ? roster.filter((r) => r.name.toLowerCase().includes(term) || (r.agency || "").toLowerCase().includes(term)).slice(0, 8) : [];
   return (
@@ -382,12 +359,12 @@ function GlobalSearch({ supabase, me, catalog }) {
             ))}
         </div>
       )}
-      {sel && <VADrawer t={sel} supabase={supabase} me={me} catalog={catalog} onClose={() => setSel(null)} />}
+      {sel && <VADrawer t={sel} catalog={catalog} onClose={() => setSel(null)} />}
     </div>
   );
 }
 
-function Directory({ supabase, me, catalog }) {
+function Directory({ catalog }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("all");
@@ -398,9 +375,15 @@ function Directory({ supabase, me, catalog }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const list = await loadVARoster(supabase);
-    setRows(list); setLoading(false);
-  }, [supabase]);
+    try {
+      const list = await loadVARoster();
+      setRows(list);
+    } catch (e) {
+      alert("Could not load VAs: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
   useEffect(() => { load(); }, [load]);
 
   const skillOptions = [...new Set((catalog || []).map((c) => c.name))].sort();
@@ -483,22 +466,22 @@ function Directory({ supabase, me, catalog }) {
           </div>
         )}
 
-      {openVA && <VADrawer t={openVA} supabase={supabase} me={me} catalog={catalog} onClose={() => setOpenVA(null)} onChanged={load} />}
+      {openVA && <VADrawer t={openVA} catalog={catalog} onClose={() => setOpenVA(null)} onChanged={load} />}
     </div>
   );
 }
 
-function VADrawer({ t, supabase, me, catalog, onClose, onChanged }) {
+function VADrawer({ t, catalog, onClose, onChanged }) {
   const [skills, setSkills] = useState(t.skills || []);
   const modPct = t.mods_total ? Math.round((100 * (t.mods_done || 0)) / t.mods_total) : null;
   const available = [...new Set((catalog || []).map((c) => c.name))].filter((n) => !skills.includes(n)).sort();
 
   async function saveSkills(next, verb, name) {
-    const { error } = await supabase.from("vas").update({ skills: next }).eq("employee_id", t.employee_id);
-    if (error) { alert("Could not update skills: " + error.message); return; }
-    setSkills(next);
-    await logActivity({ app: "training", actor: me, action: `training.va.skill_${verb}`, entityType: "va", entityId: t.employee_id, details: { skill: name } });
-    onChanged && onChanged();
+    try {
+      await api.patch(`/api/training/vas/${t.employee_id}/skills`, { skills: next, verb, skill: name });
+      setSkills(next);
+      onChanged && onChanged();
+    } catch (e) { alert("Could not update skills: " + e.message); }
   }
   const addSkill = (name) => { if (name && !skills.includes(name)) saveSkills([...skills, name], "added", name); };
   const removeSkill = (name) => saveSkills(skills.filter((s) => s !== name), "removed", name);
@@ -558,23 +541,19 @@ function VADrawer({ t, supabase, me, catalog, onClose, onChanged }) {
 // CRM track = enrollments.track 'crm'; Insurance = 'ins'; Broad = neither (the
 // general/oneoff/automation courses, track null).
 const TRACK_OF_CATEGORY = { crm: "crm", insurance: "ins" };
-const overallPct = (mods) => mods.length ? Math.round(mods.reduce((s, m) => s + (m.pct || 0), 0) / mods.length) : 0;
 
-async function enrollVA(supabase, me, vaId, course) {
+async function enrollVA(vaId, course) {
   const track = TRACK_OF_CATEGORY[course.category] || null;
-  const { data: enr, error } = await supabase.from("enrollments")
-    .insert({ va_id: vaId, course_id: course.course_id, track, started_at: new Date().toISOString().slice(0, 10), completed: false })
-    .select("enrollment_id").maybeSingle();
-  if (error) { alert("Could not enroll: " + error.message); return false; }
-  const { data: mods } = await supabase.from("modules").select("module_id").eq("course_id", course.course_id);
-  if (mods && mods.length) {
-    await supabase.from("module_progress").insert(mods.map((m) => ({ enrollment_id: enr.enrollment_id, module_id: m.module_id, pct: 0, quiz_done: 0, quiz_total: 0 })));
+  try {
+    await api.post("/api/training/enrollments", { va_id: vaId, course_id: course.course_id, track });
+    return true;
+  } catch (e) {
+    alert("Could not enroll: " + e.message);
+    return false;
   }
-  await logActivity({ app: "training", actor: me, action: "training.enrollment.created", entityType: "enrollment", entityId: enr?.enrollment_id, details: { va: vaId, course: course.name } });
-  return true;
 }
 
-function TrackView({ supabase, me, track, blurb }) {
+function TrackView({ track, blurb }) {
   const [rows, setRows] = useState([]);
   const [courses, setCourses] = useState([]); // courses available for this track
   const [vaRoster, setVaRoster] = useState([]); // [{id,name}]
@@ -584,46 +563,44 @@ function TrackView({ supabase, me, track, blurb }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [enrRes, mpRes, cRes, mRes, eRes, vRes] = await Promise.all([
-      supabase.from("enrollments").select("enrollment_id,va_id,course_id,track,started_at,completed"),
-      supabase.from("module_progress").select("module_progress_id,enrollment_id,module_id,pct,quiz_done,quiz_total"),
-      supabase.from("courses").select("course_id,name,category,cert"),
-      supabase.from("modules").select("module_id,course_id,name,position").order("position", { ascending: true }),
-      supabase.from("employees").select("id,name"),
-      supabase.from("vas").select("employee_id"),
-    ]);
-    const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
-    const courseById = Object.fromEntries((cRes.data || []).map((c) => [c.course_id, c]));
-    const modsByCourse = {};
-    (mRes.data || []).forEach((m) => { (modsByCourse[m.course_id] = modsByCourse[m.course_id] || []).push(m); });
-    const mpByEnr = {};
-    (mpRes.data || []).forEach((mp) => { (mpByEnr[mp.enrollment_id] = mpByEnr[mp.enrollment_id] || []).push(mp); });
+    try {
+      const data = await api.get("/api/training/track");
+      const emp = Object.fromEntries((data.employees || []).map((e) => [e.id, e.name]));
+      const courseById = Object.fromEntries((data.courses || []).map((c) => [c.course_id, c]));
+      const modsByCourse = {};
+      (data.modules || []).forEach((m) => { (modsByCourse[m.course_id] = modsByCourse[m.course_id] || []).push(m); });
+      const mpByEnr = {};
+      (data.moduleProgress || []).forEach((mp) => { (mpByEnr[mp.enrollment_id] = mpByEnr[mp.enrollment_id] || []).push(mp); });
 
-    const inTrack = (e) => track === "broad" ? (e.track !== "crm" && e.track !== "ins") : e.track === track;
-    const built = (enrRes.data || []).filter(inTrack).map((e) => {
-      const course = courseById[e.course_id] || {};
-      const courseMods = (modsByCourse[e.course_id] || []);
-      const mpRows = mpByEnr[e.enrollment_id] || [];
-      const mpByModule = Object.fromEntries(mpRows.map((mp) => [mp.module_id, mp]));
-      const modules = courseMods.map((m) => ({ ...m, mp: mpByModule[m.module_id] || null }));
-      const pcts = modules.map((m) => m.mp?.pct || 0);
-      return {
-        ...e,
-        vaName: emp[e.va_id] || "Unknown",
-        courseName: course.name || "—",
-        cert: !!course.cert,
-        modules,
-        overall: pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : 0,
-      };
-    }).sort((a, b) => a.vaName.localeCompare(b.vaName));
+      const inTrack = (e) => track === "broad" ? (e.track !== "crm" && e.track !== "ins") : e.track === track;
+      const built = (data.enrollments || []).filter(inTrack).map((e) => {
+        const course = courseById[e.course_id] || {};
+        const courseMods = (modsByCourse[e.course_id] || []);
+        const mpRows = mpByEnr[e.enrollment_id] || [];
+        const mpByModule = Object.fromEntries(mpRows.map((mp) => [mp.module_id, mp]));
+        const modules = courseMods.map((m) => ({ ...m, mp: mpByModule[m.module_id] || null }));
+        const pcts = modules.map((m) => m.mp?.pct || 0);
+        return {
+          ...e,
+          vaName: emp[e.va_id] || "Unknown",
+          courseName: course.name || "—",
+          cert: !!course.cert,
+          modules,
+          overall: pcts.length ? Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length) : 0,
+        };
+      }).sort((a, b) => a.vaName.localeCompare(b.vaName));
 
-    // courses offered on this track for the enroll picker
-    const offered = (cRes.data || []).filter((c) => track === "broad" ? !TRACK_OF_CATEGORY[c.category] : TRACK_OF_CATEGORY[c.category] === track);
-    setCourses(offered.sort((a, b) => a.name.localeCompare(b.name)));
-    setVaRoster((vRes.data || []).map((v) => ({ id: v.employee_id, name: emp[v.employee_id] || "Unknown" })).filter((o) => o.name !== "Unknown").sort((a, b) => a.name.localeCompare(b.name)));
-    setRows(built);
-    setLoading(false);
-  }, [supabase, track]);
+      // courses offered on this track for the enroll picker
+      const offered = (data.courses || []).filter((c) => track === "broad" ? !TRACK_OF_CATEGORY[c.category] : TRACK_OF_CATEGORY[c.category] === track);
+      setCourses(offered.sort((a, b) => a.name.localeCompare(b.name)));
+      setVaRoster((data.vaIds || []).map((id) => ({ id, name: emp[id] || "Unknown" })).filter((o) => o.name !== "Unknown").sort((a, b) => a.name.localeCompare(b.name)));
+      setRows(built);
+    } catch (e) {
+      alert("Could not load track: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [track]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -632,23 +609,19 @@ function TrackView({ supabase, me, track, blurb }) {
   async function cycleModule(row, m) {
     const cur = m.mp?.pct || 0;
     const next = cur >= 100 ? 0 : cur === 0 ? 50 : 100;
-    if (m.mp) {
-      await supabase.from("module_progress").update({ pct: next, completed_at: next === 100 ? new Date().toISOString().slice(0, 10) : null }).eq("module_progress_id", m.mp.module_progress_id);
-    } else {
-      await supabase.from("module_progress").insert({ enrollment_id: row.enrollment_id, module_id: m.module_id, pct: next, quiz_done: 0, quiz_total: 0 });
-    }
     // auto-complete the enrollment when every module is at 100
     const allDone = row.modules.every((x) => (x.module_id === m.module_id ? next : (x.mp?.pct || 0)) >= 100);
-    if (allDone !== row.completed) await supabase.from("enrollments").update({ completed: allDone }).eq("enrollment_id", row.enrollment_id);
-    await logActivity({ app: "training", actor: me, action: "training.module.progress", entityType: "enrollment", entityId: row.enrollment_id, details: { module: m.name, pct: next } });
-    load();
+    try {
+      await api.patch(`/api/training/enrollments/${row.enrollment_id}/module-progress`, {
+        module_id: m.module_id, pct: next, completed: allDone, module_name: m.name,
+      });
+      load();
+    } catch (e) { alert("Update failed: " + e.message); }
   }
   async function unenroll(row) {
     if (!confirm(`Unenroll ${row.vaName} from ${row.courseName}?`)) return;
-    await supabase.from("module_progress").delete().eq("enrollment_id", row.enrollment_id);
-    await supabase.from("enrollments").delete().eq("enrollment_id", row.enrollment_id);
-    await logActivity({ app: "training", actor: me, action: "training.enrollment.removed", entityType: "enrollment", entityId: row.enrollment_id, details: { va: row.vaName } });
-    load();
+    try { await api.del(`/api/training/enrollments/${row.enrollment_id}`); load(); }
+    catch (e) { alert("Unenroll failed: " + e.message); }
   }
 
   const pctColor = (p) => p >= 100 ? "#0f6e56" : p > 0 ? C.teal : "#bbb";
@@ -700,7 +673,7 @@ function TrackView({ supabase, me, track, blurb }) {
           </div>
         )}
 
-      {enrollOpen && <EnrollModal courses={courses} roster={vaRoster} onClose={() => setEnrollOpen(false)} onEnroll={async (vaId, course) => { const ok = await enrollVA(supabase, me, vaId, course); if (ok) { setEnrollOpen(false); load(); } }} />}
+      {enrollOpen && <EnrollModal courses={courses} roster={vaRoster} onClose={() => setEnrollOpen(false)} onEnroll={async (vaId, course) => { const ok = await enrollVA(vaId, course); if (ok) { setEnrollOpen(false); load(); } }} />}
     </div>
   );
 }
@@ -728,27 +701,18 @@ function EnrollModal({ courses, roster, onClose, onEnroll }) {
 }
 
 // ---------------- Dashboard (real counts) ----------------
-function Dashboard({ supabase }) {
+function Dashboard() {
   const [stats, setStats] = useState(null);
   useEffect(() => {
     let alive = true;
     (async () => {
-      const head = { count: "exact", head: true };
-      const [vAll, vActive, vCert, courses, enr] = await Promise.all([
-        supabase.from("vas").select("employee_id", head),
-        supabase.from("vas").select("employee_id", head).eq("status", "active"),
-        supabase.from("vas").select("employee_id", head).eq("certified", true),
-        supabase.from("courses").select("course_id", head),
-        supabase.from("enrollments").select("enrollment_id", head),
-      ]);
-      if (alive) setStats({
-        total: vAll.count || 0, deployed: vActive.count || 0, certified: vCert.count || 0,
-        courses: courses.count || 0, enrollments: enr.count || 0,
-        inTraining: (vAll.count || 0) - (vActive.count || 0),
-      });
+      try {
+        const data = await api.get("/api/training/dashboard");
+        if (alive) setStats(data);
+      } catch (e) { /* leave loading state */ }
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
 
   const cards = stats ? [
     { label: "Total VAs", value: stats.total },
@@ -777,7 +741,7 @@ function Dashboard({ supabase }) {
 }
 
 // ---------------- Settings (skills catalog manager) ----------------
-function Settings({ supabase, me, catalog, reload }) {
+function Settings({ catalog, reload }) {
   const [adding, setAdding] = useState({});   // per-category inline input text
   const [newCat, setNewCat] = useState("");
   const [newCatSkill, setNewCatSkill] = useState("");
@@ -786,19 +750,15 @@ function Settings({ supabase, me, catalog, reload }) {
   (catalog || []).forEach((c) => { (byCat[c.category] = byCat[c.category] || []).push(c); });
   const cats = Object.keys(byCat).sort();
 
-  const log = (action, details) => logActivity({ app: "training", actor: me, action, entityType: "skill", entityId: details?.name, details });
-
   async function addSkill(category, name) {
     const n = (name || "").trim(); if (!n) return;
     if ((byCat[category] || []).some((s) => s.name.toLowerCase() === n.toLowerCase())) { alert(`"${n}" already exists in ${category}.`); return; }
-    const { error } = await supabase.from("skills_catalog").insert({ category, name: n });
-    if (error) { alert("Could not add skill: " + error.message); return; }
-    await log("training.skill.added", { category, name: n }); reload();
+    try { await api.post("/api/training/skills", { category, name: n }); reload(); }
+    catch (e) { alert("Could not add skill: " + e.message); }
   }
   async function removeSkill(s) {
-    const { error } = await supabase.from("skills_catalog").delete().eq("skill_id", s.skill_id);
-    if (error) { alert("Could not remove skill: " + error.message); return; }
-    await log("training.skill.removed", { category: s.category, name: s.name }); reload();
+    try { await api.del(`/api/training/skills/${s.skill_id}`); reload(); }
+    catch (e) { alert("Could not remove skill: " + e.message); }
   }
 
   return (
@@ -839,39 +799,33 @@ function Settings({ supabase, me, catalog, reload }) {
 }
 
 // ---------------- Reports (real metrics) ----------------
-function Reports({ supabase }) {
+function Reports() {
   const [d, setD] = useState(null);
   useEffect(() => {
     let alive = true;
     (async () => {
-      const head = { count: "exact", head: true };
-      const [vCert, enrAll, enrDone, evRes, cRes, enrCourse] = await Promise.all([
-        supabase.from("vas").select("employee_id", head).eq("certified", true),
-        supabase.from("enrollments").select("enrollment_id", head),
-        supabase.from("enrollments").select("enrollment_id", head).eq("completed", true),
-        supabase.from("evaluations").select("rating"),
-        supabase.from("courses").select("course_id,name"),
-        supabase.from("enrollments").select("course_id"),
-      ]);
-      const ratings = (evRes.data || []).map((e) => e.rating).filter((r) => r != null);
-      const avg = ratings.length ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : "—";
-      const courseName = Object.fromEntries((cRes.data || []).map((c) => [c.course_id, c.name]));
-      const perCourse = {};
-      (enrCourse.data || []).forEach((e) => { perCourse[e.course_id] = (perCourse[e.course_id] || 0) + 1; });
-      const courseRows = Object.entries(perCourse).map(([id, n]) => ({ name: courseName[id] || "—", n })).sort((a, b) => b.n - a.n);
-      if (alive) setD({
-        cards: [
-          { label: "Certified VAs", value: vCert.count || 0 },
-          { label: "Enrollments", value: enrAll.count || 0 },
-          { label: "Completed", value: enrDone.count || 0 },
-          { label: "Evaluations", value: ratings.length },
-          { label: "Avg rating", value: avg },
-        ],
-        courseRows,
-      });
+      try {
+        const data = await api.get("/api/training/reports");
+        const ratings = (data.ratings || []).filter((r) => r != null);
+        const avg = ratings.length ? (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1) : "—";
+        const courseName = Object.fromEntries((data.courses || []).map((c) => [c.course_id, c.name]));
+        const perCourse = {};
+        (data.enrollmentCourseIds || []).forEach((id) => { perCourse[id] = (perCourse[id] || 0) + 1; });
+        const courseRows = Object.entries(perCourse).map(([id, n]) => ({ name: courseName[id] || "—", n })).sort((a, b) => b.n - a.n);
+        if (alive) setD({
+          cards: [
+            { label: "Certified VAs", value: data.certified || 0 },
+            { label: "Enrollments", value: data.enrollments || 0 },
+            { label: "Completed", value: data.completed || 0 },
+            { label: "Evaluations", value: ratings.length },
+            { label: "Avg rating", value: avg },
+          ],
+          courseRows,
+        });
+      } catch (e) { /* leave loading state */ }
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
 
   if (!d) return <div style={{ color: C.sub, fontSize: 13, padding: 20 }}>Loading…</div>;
   return (
@@ -898,16 +852,20 @@ function Reports({ supabase }) {
 }
 
 // ---------------- Root ----------------
-export default function TrainingApp({ session, supabase }) {
+export default function TrainingApp({ session }) {
   const me = session?.employee;
   const [nav, setNav] = useState("catalog");
   const [catalog, setCatalog] = useState([]);
   const [title, sub] = PAGE_META[nav] || ["", ""];
 
   const loadCatalog = useCallback(async () => {
-    const { data } = await supabase.from("skills_catalog").select("skill_id,category,name");
-    setCatalog(data || []);
-  }, [supabase]);
+    try {
+      const data = await api.get("/api/training/skills-catalog");
+      setCatalog(data.skills || []);
+    } catch (e) {
+      setCatalog([]);
+    }
+  }, []);
   useEffect(() => { loadCatalog(); }, [loadCatalog]);
 
   return (
@@ -923,17 +881,17 @@ export default function TrainingApp({ session, supabase }) {
             </div>
             <p style={{ margin: "6px 0 0 17px", fontSize: 12.5, color: C.sub }}>{sub}</p>
           </div>
-          <GlobalSearch supabase={supabase} me={me} catalog={catalog} />
+          <GlobalSearch catalog={catalog} />
         </div>
         <div style={{ padding: "22px 32px 48px" }}>
-          {nav === "catalog" ? <Catalog supabase={supabase} me={me} />
-            : nav === "directory" ? <Directory supabase={supabase} me={me} catalog={catalog} />
-            : nav === "dashboard" ? <Dashboard supabase={supabase} />
-            : nav === "crm" ? <TrackView supabase={supabase} me={me} track="crm" blurb="Combo build track. CRM development courses and per-module progress." />
-            : nav === "insurance" ? <TrackView supabase={supabase} me={me} track="ins" blurb="Insurance training for gen and handed-off combo VAs." />
-            : nav === "broad" ? <TrackView supabase={supabase} me={me} track="broad" blurb="Broad market training: onboarding, security, AMS and other one-off courses." />
-            : nav === "reports" ? <Reports supabase={supabase} />
-            : nav === "settings" ? <Settings supabase={supabase} me={me} catalog={catalog} reload={loadCatalog} />
+          {nav === "catalog" ? <Catalog />
+            : nav === "directory" ? <Directory catalog={catalog} />
+            : nav === "dashboard" ? <Dashboard />
+            : nav === "crm" ? <TrackView track="crm" blurb="Combo build track. CRM development courses and per-module progress." />
+            : nav === "insurance" ? <TrackView track="ins" blurb="Insurance training for gen and handed-off combo VAs." />
+            : nav === "broad" ? <TrackView track="broad" blurb="Broad market training: onboarding, security, AMS and other one-off courses." />
+            : nav === "reports" ? <Reports />
+            : nav === "settings" ? <Settings catalog={catalog} reload={loadCatalog} />
             : <Placeholder title={title} />}
         </div>
       </div>

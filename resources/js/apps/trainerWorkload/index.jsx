@@ -1,24 +1,14 @@
 /**
- * Lava Trainer Workload — translated for the hub.
+ * Lava Trainer Workload — frontend only.
  *
- * The teammate's app was a template-driven training calendar (per-trainee-type
- * day-by-day session templates, all mock). The schema models training as a flat
- * list of sessions: training_sessions (va_id, trainer_id, scheduled_at, track,
- * status) + evaluations (rating, note, endorsed). Per the playbook we bend to the
- * schema: this is a real workload board built on actual sessions and evaluations,
- * not the mock template calendar (no schema home for templates/modules/time-ranges).
- *
- * Reads:  training_sessions, evaluations, employees (trainer roster + VA names),
- *         vas (roster for scheduling).
- * Writes: schedule a session, reassign trainer, change status, record an
- *         evaluation / endorsement -> training_sessions / evaluations / vas, with
- *         activity_log (training.session.* / training.trainer.reassigned /
- *         training.session.evaluated / training.va.endorsed).
+ * Data layer now lives in Laravel (TrainerWorkloadController). This file no
+ * longer talks to Supabase or writes the activity log; it fetches /api/
+ * trainer-workload and mutates via /api/* endpoints through lib/api. Identity
+ * comes from the shell session. Everything below the data calls is pure UI.
  */
-
 import { useState, useEffect, useCallback } from "react";
 import { Plus, X, Calendar, Trash2, BadgeCheck, Star } from "lucide-react";
-import { logActivity } from "../../lib/activity";
+import { api } from "../../lib/api";
 
 const B = {
   red: "#E73835", dark: "#24242D", teal: "#145365", white: "#FFFFFF", black: "#1B120B",
@@ -40,10 +30,6 @@ const STATUS_META = {
 const ini = (n) => (n || "?").split(" ").map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
 
-function StatusPill({ status }) {
-  const [lbl, bg, fg] = STATUS_META[status] || [status, B.fill, B.muted];
-  return <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", padding: "3px 9px", borderRadius: 999, background: bg, color: fg, whiteSpace: "nowrap" }}>{lbl}</span>;
-}
 function Avatar({ name, size = 30, bg = B.teal }) {
   return <span style={{ width: size, height: size, borderRadius: "50%", background: bg, color: "#fff", fontSize: size * 0.38, fontWeight: 600, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{ini(name)}</span>;
 }
@@ -53,7 +39,7 @@ const btnPrimary = { display: "flex", alignItems: "center", gap: 6, border: "non
 const btnGhost = { border: `1px solid ${B.border2}`, background: B.white, color: B.ink2, fontSize: 11.5, fontWeight: 500, padding: "6px 11px", borderRadius: 8, cursor: "pointer", fontFamily: FONT };
 const fieldSel = { width: "100%", padding: "9px 11px", borderRadius: 8, border: `1px solid ${B.border2}`, fontSize: 12.5, fontFamily: FONT, marginBottom: 14, background: "#fff", boxSizing: "border-box" };
 
-export default function TrainerWorkloadApp({ session, supabase }) {
+export default function TrainerWorkloadApp({ session }) {
   const me = session?.employee;
   const [track, setTrack] = useState("crm");
   const [sessions, setSessions] = useState([]);
@@ -67,24 +53,24 @@ export default function TrainerWorkloadApp({ session, supabase }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [sRes, eRes, vRes, evRes] = await Promise.all([
-      supabase.from("training_sessions").select("training_session_id,va_id,trainer_id,scheduled_at,track,status").order("scheduled_at", { ascending: true }),
-      supabase.from("employees").select("id,name,position,department"),
-      supabase.from("vas").select("employee_id"),
-      supabase.from("evaluations").select("evaluation_id,va_id,trainer_id,rating,note,endorsed,created_at").order("created_at", { ascending: false }),
-    ]);
-    const emp = Object.fromEntries((eRes.data || []).map((e) => [e.id, e.name]));
-    const roster = (eRes.data || [])
-      .filter((e) => /trainer|training lead/i.test(e.position || ""))
-      .map((e) => ({ id: e.id, name: e.name, position: e.position, track: /insurance/i.test(e.position || "") ? "ins" : "crm" }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    setEmpName(emp);
-    setTrainers(roster);
-    setVaRoster((vRes.data || []).map((v) => ({ id: v.employee_id, name: emp[v.employee_id] || "Unknown" })).filter((o) => o.name !== "Unknown").sort((a, b) => a.name.localeCompare(b.name)));
-    setSessions(sRes.data || []);
-    setEvals(evRes.data || []);
-    setLoading(false);
-  }, [supabase]);
+    try {
+      const data = await api.get("/api/trainer-workload");
+      const emp = Object.fromEntries((data.employees || []).map((e) => [e.id, e.name]));
+      const roster = (data.employees || [])
+        .filter((e) => /trainer|training lead/i.test(e.position || ""))
+        .map((e) => ({ id: e.id, name: e.name, position: e.position, track: /insurance/i.test(e.position || "") ? "ins" : "crm" }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setEmpName(emp);
+      setTrainers(roster);
+      setVaRoster((data.vaIds || []).map((id) => ({ id, name: emp[id] || "Unknown" })).filter((o) => o.name !== "Unknown").sort((a, b) => a.name.localeCompare(b.name)));
+      setSessions(data.sessions || []);
+      setEvals(data.evaluations || []);
+    } catch (e) {
+      alert("Could not load workload: " + e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -93,42 +79,27 @@ export default function TrainerWorkloadApp({ session, supabase }) {
   const loadOf = (trainerId) => trackSessions.filter((s) => s.trainer_id === trainerId).length;
   const evalForSession = (s) => evals.find((e) => e.va_id === s.va_id && e.trainer_id === s.trainer_id);
 
-  // -- writes ----------------------------------------------------------------
+  // -- writes (Laravel via lib/api) -----------------------------------------
   async function schedule(form) {
-    const { error } = await supabase.from("training_sessions").insert({
-      va_id: form.va_id, trainer_id: form.trainer_id, scheduled_at: form.scheduled_at, track, status: "scheduled",
-    });
-    if (error) { alert("Could not schedule: " + error.message); return; }
-    await logActivity({ app: "training", actor: me, action: "training.session.scheduled", entityType: "training_session", entityId: form.va_id, details: { trainer: empName[form.trainer_id], track } });
-    setScheduleOpen(false); load();
+    try { await api.post("/api/training-sessions", { ...form, track }); setScheduleOpen(false); load(); }
+    catch (e) { alert("Could not schedule: " + e.message); }
   }
   async function reassign(s, trainerId) {
-    const { error } = await supabase.from("training_sessions").update({ trainer_id: trainerId }).eq("training_session_id", s.training_session_id);
-    if (error) { alert("Reassign failed: " + error.message); return; }
-    await logActivity({ app: "training", actor: me, action: "training.trainer.reassigned", entityType: "training_session", entityId: s.training_session_id, details: { to: empName[trainerId] } });
-    load();
+    try { await api.patch(`/api/training-sessions/${s.training_session_id}`, { trainer_id: trainerId }); load(); }
+    catch (e) { alert("Reassign failed: " + e.message); }
   }
   async function setStatus(s, status) {
-    const { error } = await supabase.from("training_sessions").update({ status }).eq("training_session_id", s.training_session_id);
-    if (error) { alert("Status update failed: " + error.message); return; }
-    await logActivity({ app: "training", actor: me, action: "training.session.status", entityType: "training_session", entityId: s.training_session_id, details: { status } });
-    load();
+    try { await api.patch(`/api/training-sessions/${s.training_session_id}`, { status }); load(); }
+    catch (e) { alert("Status update failed: " + e.message); }
   }
   async function delSession(s) {
     if (!confirm("Delete this session?")) return;
-    await supabase.from("training_sessions").delete().eq("training_session_id", s.training_session_id);
-    await logActivity({ app: "training", actor: me, action: "training.session.removed", entityType: "training_session", entityId: s.training_session_id, details: {} });
-    load();
+    try { await api.del(`/api/training-sessions/${s.training_session_id}`); load(); }
+    catch (e) { alert("Delete failed: " + e.message); }
   }
   async function saveEval(s, rating, note, endorsed) {
-    const { error } = await supabase.from("evaluations").insert({ va_id: s.va_id, trainer_id: s.trainer_id, rating, note: note || null, endorsed: !!endorsed });
-    if (error) { alert("Could not save evaluation: " + error.message); return; }
-    await logActivity({ app: "training", actor: me, action: "training.session.evaluated", entityType: "evaluation", entityId: s.va_id, details: { rating, endorsed: !!endorsed } });
-    if (endorsed) {
-      await supabase.from("vas").update({ certified: true }).eq("employee_id", s.va_id);
-      await logActivity({ app: "training", actor: me, action: "training.va.endorsed", entityType: "va", entityId: s.va_id, details: { by: empName[s.trainer_id] } });
-    }
-    setEvalFor(null); load();
+    try { await api.post("/api/evaluations", { va_id: s.va_id, trainer_id: s.trainer_id, rating, note: note || null, endorsed: !!endorsed }); setEvalFor(null); load(); }
+    catch (e) { alert("Could not save evaluation: " + e.message); }
   }
 
   const metrics = [
@@ -241,7 +212,7 @@ export default function TrainerWorkloadApp({ session, supabase }) {
           )}
       </div>
 
-      {scheduleOpen && <ScheduleModal trainers={trainers.filter((t) => t.track === track).length ? trainers.filter((t) => t.track === track) : trainers} roster={vaRoster} track={track} onClose={() => setScheduleOpen(false)} onSchedule={schedule} />}
+      {scheduleOpen && <ScheduleModal trainers={trackTrainers.length ? trackTrainers : trainers} roster={vaRoster} track={track} onClose={() => setScheduleOpen(false)} onSchedule={schedule} />}
     </div>
   );
 }

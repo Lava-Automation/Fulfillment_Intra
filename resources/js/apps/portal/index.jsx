@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from "react";
-import { logActivity } from "../../lib/activity";
+import { api } from "../../lib/api";
 
 // Other apps embedded as Portal pages. The Portal is becoming the host shell, so
 // Dev Support and QAQC render INSIDE the Portal content area (not a reroute).
@@ -648,51 +648,42 @@ function TabBuildScore({ acctId }) {
 // ─────────────────────────────────────────────
 //  ACCOUNT DETAIL
 // ─────────────────────────────────────────────
-function AccountDetail({ acctId, accounts, supabase, onBack, initialTab }) {
+function AccountDetail({ acctId, accounts, onBack, initialTab }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'overview');
   const acct = accounts.find(a => a.id === acctId) || {};
   const cc = ccClass(acct.csStatus);
 
-  // Pass 2: per-account detail from real tables. Overview / Tickets / Meetings /
-  // Notes / Timeline are wired to Supabase; Contacts / KPIs / Build Score stay
-  // on the mock default (no backing data in the schema yet).
+  // Pass 2: per-account detail from real tables (via Laravel). Overview /
+  // Tickets / Meetings / Notes / Timeline are wired to /api/portal; Contacts /
+  // KPIs / Build Score stay on the mock default (no backing data yet).
   const [d, setD] = useState(() => getAcctDetail(acctId));
   useEffect(() => {
     let alive = true;
     (async () => {
       const fmt = (x) => x ? new Date(x).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
       const sev = { H: 'High', M: 'Medium', L: 'Low' };
-      const [acctRes, ticketsRes, meetingsRes, notesRes, tlRes, empRes] = await Promise.all([
-        supabase.from('accounts').select('plan,crm,ams,fulfillment,cs_status,since_date,cancel_date,hubspot_company_id').eq('account_id', acctId).maybeSingle(),
-        supabase.from('tickets').select('ticket_id,title,priority,status,created_at,resolved_at').eq('account_id', acctId).order('created_at', { ascending: false }),
-        supabase.from('meetings').select('type,title,status,meeting_date,scheduled_minutes,actual_minutes').eq('account_id', acctId).order('meeting_date', { ascending: false }),
-        supabase.from('notes').select('department,author_id,body,created_at').eq('account_id', acctId).order('created_at', { ascending: false }),
-        supabase.from('timeline_events').select('event_date,label,detail,color').eq('account_id', acctId).order('event_date', { ascending: false }),
-        supabase.from('employees').select('id,name'),
-      ]);
+      let data;
+      try { data = await api.get(`/api/portal/accounts/${acctId}`); }
+      catch { if (alive) setD(getAcctDetail(acctId)); return; }
       if (!alive) return;
-      const a = acctRes.data || {};
-      let company = {};
-      if (a.hubspot_company_id) {
-        const { data: c } = await supabase.from('hubspot_companies').select('name,phone,city,state,domain').eq('id', a.hubspot_company_id).maybeSingle();
-        company = c || {};
-      }
-      const empName = Object.fromEntries((empRes.data || []).map(e => [e.id, e.name]));
-      const tickets = ticketsRes.data || [];
+      const a = data.account || {};
+      const company = data.company || {};
+      const empName = data.employeeNames || {};
+      const tickets = data.tickets || [];
       const tRow = (t) => ({ id: String(t.ticket_id).slice(0, 8), title: t.title, severity: sev[t.priority] || t.priority, date: fmt(t.created_at), category: 'Dev Support', resolved: fmt(t.resolved_at) });
       const open = tickets.filter(t => t.status !== 'resolved').map(tRow);
       const closed = tickets.filter(t => t.status === 'resolved').map(tRow);
       const mtgRow = (m) => ({ type: m.type || m.title || 'Meeting', date: fmt(m.meeting_date), time: m.actual_minutes ? `${m.actual_minutes} min` : (m.scheduled_minutes ? `${m.scheduled_minutes} min planned` : ''), attendees: '—', notes: m.title || '' });
-      const meetingsAll = meetingsRes.data || [];
+      const meetingsAll = data.meetings || [];
       const scheduled = meetingsAll.filter(m => m.status === 'scheduled').map(mtgRow);
       const previous = meetingsAll.filter(m => m.status !== 'scheduled').map(mtgRow);
       const noteBucket = { sales: [], am: [], pm: [], dev: [] };
-      (notesRes.data || []).forEach(n => {
+      (data.notes || []).forEach(n => {
         const dep = (n.department || '').toLowerCase();
         const key = dep.includes('sales') ? 'sales' : (dep.includes('account') || dep === 'am') ? 'am' : dep.includes('dev') ? 'dev' : 'pm';
         noteBucket[key].push({ date: fmt(n.created_at), author: empName[n.author_id] || 'Staff', text: n.body || '' });
       });
-      const timeline = (tlRes.data || []).map(e => ({ date: fmt(e.event_date), label: e.label, detail: e.detail, color: e.color }));
+      const timeline = (data.timeline || []).map(e => ({ date: fmt(e.event_date), label: e.label, detail: e.detail, color: e.color }));
       setD({
         profile: {
           agencyName: company.name || acct.name || '—',
@@ -715,7 +706,7 @@ function AccountDetail({ acctId, accounts, supabase, onBack, initialTab }) {
       });
     })();
     return () => { alive = false; };
-  }, [acctId, supabase, acct.name]);
+  }, [acctId, acct.name]);
 
   const tabs = [
     { key:'overview',   label:'Agency Overview' },
@@ -758,7 +749,7 @@ function AccountDetail({ acctId, accounts, supabase, onBack, initialTab }) {
 // ─────────────────────────────────────────────
 //  PAGES
 // ─────────────────────────────────────────────
-function Dashboard({ onNav, onOpenAcct, accounts, supabase }) {
+function Dashboard({ onNav, onOpenAcct, accounts }) {
   const csOrder = {Cancelled:0,'At Risk':1,New:2,Healthy:3};
   const sorted = [...accounts].sort((a,b) => (csOrder[a.csStatus]||9)-(csOrder[b.csStatus]||9));
   const [vaCount, setVaCount] = useState(0);
@@ -767,23 +758,21 @@ function Dashboard({ onNav, onOpenAcct, accounts, supabase }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [vasRes, mtgRes, logRes] = await Promise.all([
-        supabase.from('vas').select('employee_id', { count: 'exact', head: true }),
-        supabase.from('meetings').select('meeting_id', { count: 'exact', head: true }).eq('status', 'scheduled'),
-        supabase.from('activity_log').select('app,action,actor_email,created_at').order('created_at', { ascending: false }).limit(6),
-      ]);
+      let data;
+      try { data = await api.get('/api/portal/dashboard'); }
+      catch { return; }
       if (!alive) return;
-      setVaCount(vasRes.count || 0);
-      setPendingMtgs(mtgRes.count || 0);
+      setVaCount(data.vaCount || 0);
+      setPendingMtgs(data.pendingMeetings || 0);
       const appColor = { devsupport: 'r', qa: 'la', training: 'g', clientprofile: 'b', portal: 'y' };
-      setActivity((logRes.data || []).map(l => ({
+      setActivity((data.activity || []).map(l => ({
         c: appColor[l.app] || 'b',
         text: <><strong>{l.actor_email || 'Someone'}</strong> · {l.action}</>,
         sub: new Date(l.created_at).toLocaleString(),
       })));
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
   const openTix = accounts.reduce((s, a) => s + (a.tix || 0), 0);
   const stats = [
     { n:accounts.length, label:'Active Accounts', sub:'', page:'accounts', nc:T.ink },
@@ -1299,16 +1288,16 @@ function TicketKanbanCard({ t, onClick }) {
   );
 }
 
-function TicketsPage({ supabase }) {
+function TicketsPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [devFilter, setDevFilter]       = useState('all');
   const [view, setView]                 = useState('list');
   const [openTicket, setOpenTicket]     = useState(null);
   const [rows, setRows] = useState([]);
 
-  // Real tickets from Supabase (RLS-filtered). dev = assignee, stage = status
-  // relabeled to the board columns, account/PM resolved by id. notes/files/type
-  // have no schema home yet, so they stay empty (no fabricated data).
+  // Real tickets from Laravel (RLS-filtered server-side). dev = assignee, stage =
+  // status relabeled to the board columns, account/PM resolved by id. notes/
+  // files/type have no schema home yet, so they stay empty (no fabricated data).
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -1316,18 +1305,14 @@ function TicketsPage({ supabase }) {
       const sev = { H: 'High', M: 'Medium', L: 'Low' };
       const stageOf = { open: 'New', in_progress: 'In Progress', waiting: 'Waiting on Client', resolved: 'Completed' };
       const statusOf = { open: 'open', in_progress: 'in-progress', waiting: 'waiting', resolved: 'resolved' };
-      const [tk, accts, emps] = await Promise.all([
-        supabase.from('tickets').select('ticket_id,account_id,title,priority,status,assigned_to,created_at,resolved_at').order('created_at', { ascending: false }),
-        supabase.from('accounts').select('account_id,pm_id,hubspot_company_id'),
-        supabase.from('employees').select('id,name'),
-      ]);
+      let data;
+      try { data = await api.get('/api/portal/tickets'); }
+      catch { return; }
       if (!alive) return;
-      const empName = Object.fromEntries((emps.data || []).map(e => [e.id, e.name]));
-      const compIds = [...new Set((accts.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
-      let compName = {};
-      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
-      const acctInfo = Object.fromEntries((accts.data || []).map(a => [a.account_id, { name: compName[a.hubspot_company_id] || '—', pm: empName[a.pm_id] || '' }]));
-      const out = (tk.data || []).map(t => ({
+      const empName = data.employeeNames || {};
+      const compName = data.companyNames || {};
+      const acctInfo = Object.fromEntries((data.accounts || []).map(a => [a.account_id, { name: compName[a.hubspot_company_id] || '—', pm: empName[a.pm_id] || '' }]));
+      const out = (data.tickets || []).map(t => ({
         id: String(t.ticket_id).slice(0, 8),
         acct: acctInfo[t.account_id]?.name || '—',
         title: t.title,
@@ -1344,7 +1329,7 @@ function TicketsPage({ supabase }) {
       setRows(out);
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
 
   const devNames = [...new Set(rows.map(t => t.dev).filter(Boolean))];
 
@@ -1495,25 +1480,20 @@ function TicketsPage({ supabase }) {
   );
 }
 
-function MeetingsPage({ session, supabase }) {
-  const me = session?.employee || null;
+function MeetingsPage() {
   const [meetings, setMeetings] = useState([]);
   const fmt = (x) => x ? new Date(x).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [mRes, accRes, empRes] = await Promise.all([
-        supabase.from('meetings').select('meeting_id,account_id,type,title,status,meeting_date,meeting_time,scheduled_minutes,contact,notes').order('meeting_date', { ascending: true }),
-        supabase.from('accounts').select('account_id,pm_id,hubspot_company_id'),
-        supabase.from('employees').select('id,name'),
-      ]);
+      let data;
+      try { data = await api.get('/api/portal/meetings'); }
+      catch { return; }
       if (!alive) return;
-      const empName = Object.fromEntries((empRes.data || []).map(e => [e.id, e.name]));
-      const compIds = [...new Set((accRes.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
-      let compName = {};
-      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
-      const acctInfo = Object.fromEntries((accRes.data || []).map(a => [a.account_id, { name: compName[a.hubspot_company_id] || '—', pm: empName[a.pm_id] || '' }]));
-      setMeetings((mRes.data || []).map(m => ({
+      const empName = data.employeeNames || {};
+      const compName = data.companyNames || {};
+      const acctInfo = Object.fromEntries((data.accounts || []).map(a => [a.account_id, { name: compName[a.hubspot_company_id] || '—', pm: empName[a.pm_id] || '' }]));
+      setMeetings((data.meetings || []).map(m => ({
         id: m.meeting_id,
         title: m.title || m.type || 'Meeting',
         type: m.type || '',
@@ -1528,17 +1508,15 @@ function MeetingsPage({ session, supabase }) {
       })));
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
 
   const pending = meetings.filter(m => m.status === 'pending' || m.status === 'scheduled');
   const confirmed = meetings.filter(m => m.status === 'confirmed');
 
   async function handleMtg(id, action) {
     const status = action === 'confirmed' ? 'confirmed' : 'declined';
-    const { error } = await supabase.from('meetings').update({ status }).eq('meeting_id', id);
-    if (error) return;
-    const m = meetings.find(x => x.id === id);
-    await logActivity({ app: 'portal', actor: me, action: `portal.meeting.${status}`, entityType: 'meeting', entityId: id, details: { title: m?.title } });
+    try { await api.patch(`/api/portal/meetings/${id}`, { status }); }
+    catch { return; }
     setMeetings(prev => prev.map(x => x.id === id ? { ...x, status } : x));
   }
 
@@ -1669,7 +1647,7 @@ function DocsPage() {
   );
 }
 
-function TrainersContent({ supabase }) {
+function TrainersContent() {
   const [trainers, setTrainers] = useState([]);
   useEffect(() => {
     let alive = true;
@@ -1677,22 +1655,16 @@ function TrainersContent({ supabase }) {
       const init = (n) => (n || '?').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
       const colors = ['#1A5FAA', '#6A3A9A', '#1D7A4F', '#8B4513', '#145365', '#AA4A1A'];
       const pick = (n) => colors[(n || '?').charCodeAt(0) % colors.length];
-      const [vasRes, empRes, accRes, trRes, tsRes] = await Promise.all([
-        supabase.from('vas').select('employee_id,account_id,title,status,mods_done,mods_total,dev_trainer_id,ins_trainer_id'),
-        supabase.from('employees').select('id,name,position,email'),
-        supabase.from('accounts').select('account_id,hubspot_company_id'),
-        supabase.from('trainers').select('employee_id,specialty,capacity'),
-        supabase.from('training_sessions').select('trainer_id'),
-      ]);
+      let data;
+      try { data = await api.get('/api/portal/trainers'); }
+      catch { return; }
       if (!alive) return;
-      const emp = Object.fromEntries((empRes.data || []).map(e => [e.id, e]));
-      const trMeta = Object.fromEntries((trRes.data || []).map(t => [t.employee_id, t]));
-      const compIds = [...new Set((accRes.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
-      let compName = {};
-      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
-      const acctComp = Object.fromEntries((accRes.data || []).map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
-      const vlist = vasRes.data || [];
-      const ids = new Set((trRes.data || []).map(t => t.employee_id));
+      const emp = Object.fromEntries((data.employees || []).map(e => [e.id, e]));
+      const trMeta = Object.fromEntries((data.trainers || []).map(t => [t.employee_id, t]));
+      const compName = data.companyNames || {};
+      const acctComp = Object.fromEntries((data.accounts || []).map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
+      const vlist = data.vas || [];
+      const ids = new Set((data.trainers || []).map(t => t.employee_id));
       vlist.forEach(v => { if (v.dev_trainer_id) ids.add(v.dev_trainer_id); if (v.ins_trainer_id) ids.add(v.ins_trainer_id); });
       const rows = [...ids].map(id => {
         const name = emp[id]?.name || 'Unknown';
@@ -1710,7 +1682,7 @@ function TrainersContent({ supabase }) {
       setTrainers(rows);
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
   const wC = (w) => w>=90?T.red:w>=60?'#D4A017':T.green;
   const wL = (w) => w>=90?'At Capacity':w>=60?'Moderate':'Available';
   const mC = (done,tot) => tot && done===tot?T.green:done>=5?'#D4A017':T.red;
@@ -1762,7 +1734,7 @@ function TrainersContent({ supabase }) {
       });
 };
 
-function VAOverviewPage({ supabase }) {
+function VAOverviewPage() {
   const [vaFilter, setVaFilter] = useState('all');
   const [vas, setVas] = useState([]);
   useEffect(() => {
@@ -1772,18 +1744,14 @@ function VAOverviewPage({ supabase }) {
       const init = (n) => (n || '?').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
       const colors = ['#1A5FAA', '#6A3A9A', '#1D7A4F', '#8B4513', '#145365', '#AA4A1A', '#2A7A4F', '#B07D10'];
       const pick = (n) => colors[(n || '?').charCodeAt(0) % colors.length];
-      const [vasRes, empRes, accRes] = await Promise.all([
-        supabase.from('vas').select('employee_id,account_id,title,status,started_at,dev_trainer_id,ins_trainer_id,task_comp,tasks_run,mods_done,mods_total,bio,skills,issues'),
-        supabase.from('employees').select('id,name,position'),
-        supabase.from('accounts').select('account_id,hubspot_company_id'),
-      ]);
+      let data;
+      try { data = await api.get('/api/portal/va-overview'); }
+      catch { return; }
       if (!alive) return;
-      const emp = Object.fromEntries((empRes.data || []).map(e => [e.id, e]));
-      const compIds = [...new Set((accRes.data || []).map(a => a.hubspot_company_id).filter(Boolean))];
-      let compName = {};
-      if (compIds.length) { const { data: cs } = await supabase.from('hubspot_companies').select('id,name').in('id', compIds); compName = Object.fromEntries((cs || []).map(c => [c.id, c.name])); }
-      const acctComp = Object.fromEntries((accRes.data || []).map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
-      const rows = (vasRes.data || []).map(v => {
+      const emp = Object.fromEntries((data.employees || []).map(e => [e.id, e]));
+      const compName = data.companyNames || {};
+      const acctComp = Object.fromEntries((data.accounts || []).map(a => [a.account_id, compName[a.hubspot_company_id] || '—']));
+      const rows = (data.vas || []).map(v => {
         const name = emp[v.employee_id]?.name || 'Unknown';
         const trainerId = v.dev_trainer_id || v.ins_trainer_id;
         return {
@@ -1807,7 +1775,7 @@ function VAOverviewPage({ supabase }) {
       setVas(rows);
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
   const filteredVAs = vaFilter === 'all' ? vas : vas.filter(v => v.status === vaFilter);
   return (
     <div className="page-enter">
@@ -1878,11 +1846,11 @@ function VAOverviewPage({ supabase }) {
   );
 }
 
-function LAVATrainersPage({ supabase }) {
+function LAVATrainersPage() {
   return (
     <div className="page-enter">
       <div style={{ marginBottom:22 }}><h2 style={{ ...fd, fontSize:28, fontWeight:800 }}>LAVA Trainers</h2><p style={{ ...fm, fontSize:11, color:T.ink3, marginTop:3 }}>Trainer workloads and assigned VAs</p></div>
-      <TrainersContent supabase={supabase} />
+      <TrainersContent />
     </div>
   );
 }
@@ -1907,44 +1875,33 @@ export default function App({ session, supabase }) {
   const [openAcctId, setOpenAcctId] = useState(null);
   const [openAcctTab, setOpenAcctTab] = useState(null);
 
-  // Accounts come from Supabase (RLS-filtered), shaped to match what the
-  // Dashboard and Accounts views already expect. Deeper per-account detail
+  // Accounts come from Laravel (RLS-filtered server-side), shaped to match what
+  // the Dashboard and Accounts views already expect. Deeper per-account detail
   // tabs still read mock data in this pass.
   const [accounts, setAccounts] = useState([]);
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data: accts, error } = await supabase
-        .from('accounts')
-        .select('account_id, fulfillment, cs_status, stage, since_date, hubspot_company_id, pm_id');
-      if (error || !accts) { if (alive) setAccounts([]); return; }
-      const companyIds = [...new Set(accts.map(a => a.hubspot_company_id).filter(Boolean))];
-      const pmIds = [...new Set(accts.map(a => a.pm_id).filter(Boolean))];
-      const [companiesRes, pmsRes, ticketsRes] = await Promise.all([
-        companyIds.length ? supabase.from('hubspot_companies').select('id,name').in('id', companyIds) : Promise.resolve({ data: [] }),
-        pmIds.length ? supabase.from('employees').select('id,name').in('id', pmIds) : Promise.resolve({ data: [] }),
-        supabase.from('tickets').select('account_id,status'),
-      ]);
-      const companyName = Object.fromEntries((companiesRes.data || []).map(c => [c.id, c.name]));
-      const pmName = Object.fromEntries((pmsRes.data || []).map(p => [p.id, p.name]));
-      const openByAcct = {};
-      (ticketsRes.data || []).forEach(t => { if (t.status !== 'resolved') openByAcct[t.account_id] = (openByAcct[t.account_id] || 0) + 1; });
+      let data;
+      try { data = await api.get('/api/portal/accounts'); }
+      catch { if (alive) setAccounts([]); return; }
+      if (!alive) return;
       const monthYear = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '';
-      const rows = accts.map(a => ({
-        id: a.account_id,
-        name: companyName[a.hubspot_company_id] || 'Unknown agency',
-        pm: pmName[a.pm_id] || '—',
-        fulfillment: a.fulfillment || '—',
-        csStatus: a.cs_status || 'New',
-        stage: a.stage || 'Onboarding',
+      const rows = (data.accounts || []).map(a => ({
+        id: a.id,
+        name: a.name,
+        pm: a.pm,
+        fulfillment: a.fulfillment,
+        csStatus: a.csStatus,
+        stage: a.stage,
         since: monthYear(a.since_date),
-        tix: openByAcct[a.account_id] || 0,
+        tix: a.tix || 0,
         pct: 0, // no progress column in the schema yet (bend-to-schema)
       }));
-      if (alive) setAccounts(rows);
+      setAccounts(rows);
     })();
     return () => { alive = false; };
-  }, [supabase]);
+  }, []);
 
   const navTo = (p) => { setPage(p); setOpenAcctId(null); setOpenAcctTab(null); };
   const openAcct = (id, tab) => { setOpenAcctId(id); setOpenAcctTab(tab || null); setPage('accounts'); };
@@ -1991,7 +1948,7 @@ export default function App({ session, supabase }) {
             <div style={{ width:30, height:30, background:T.lava, display:'flex', alignItems:'center', justifyContent:'center', ...fd, fontSize:13, fontWeight:700, color:'#fff' }}>{(me?.name || '?').charAt(0)}</div>
             <div style={{ minWidth:0, flex:1 }}>
               <div style={{ fontSize:12, color:'#CCC', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{me?.name || 'Unknown'}</div>
-              <div style={{ ...fm, fontSize:10, color:'#666' }}>{me?.position || me?.department || ''}</div>
+              <div style={{ ...fm, fontSize:10, color:'#666', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }} title={me?.email || ''}>{me?.email || me?.position || me?.department || ''}</div>
             </div>
             {session?.signOut && (
               <button onClick={() => session.signOut()} title="Sign out" style={{ background:'transparent', color:'#888', border:'1px solid #333', borderRadius:6, padding:'4px 9px', fontSize:10, cursor:'pointer', ...fm }}>Sign out</button>
@@ -2013,11 +1970,11 @@ export default function App({ session, supabase }) {
             {page === 'clientprofiles' && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Client Profiles…</div>}><ClientProfileApp session={session} supabase={supabase} /></Suspense>}
             {/* Accounts: the Portal's own accounts list + detail (restored). */}
             {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
-            {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
-            {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} supabase={supabase} />}
-            {page === 'vaoverview'     && <VAOverviewPage supabase={supabase} />}
-            {page === 'lavatrainers'   && <LAVATrainersPage supabase={supabase} />}
-            {page === 'meetings'       && <MeetingsPage session={session} supabase={supabase} />}
+            {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
+            {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} />}
+            {page === 'vaoverview'     && <VAOverviewPage />}
+            {page === 'lavatrainers'   && <LAVATrainersPage />}
+            {page === 'meetings'       && <MeetingsPage />}
             {page === 'comms'          && <CommsPage />}
             {page === 'docs'           && <DocsPage />}
             {page === 'incident'       && <ComingSoonPage title="Incident / Postmortem" icon="🚨" desc="Log and track incidents, outages, and post-mortem reviews." />}

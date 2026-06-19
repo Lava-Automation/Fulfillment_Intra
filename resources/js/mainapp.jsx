@@ -6,7 +6,6 @@
 // and a top-level error boundary. Keep this file small.
 import React, { Suspense, lazy } from 'react';
 import { useSession } from './lib/useSession';
-import { supabase } from './lib/supabase';
 import { AppErrorBoundary } from './lib/AppErrorBoundary';
 
 const Portal = lazy(() => import('./apps/portal/index.jsx'));
@@ -70,7 +69,7 @@ export default function MainApp() {
   return (
     <AppErrorBoundary appName="Portal" routeKey="portal">
       <Suspense fallback={<Loading />}>
-        <Portal session={session} supabase={supabase} />
+        <Portal session={session} />
       </Suspense>
     </AppErrorBoundary>
   );
