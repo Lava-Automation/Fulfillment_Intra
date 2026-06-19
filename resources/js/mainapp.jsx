@@ -55,15 +55,14 @@ function SignInGate({ onSignIn }) {
 }
 
 export default function MainApp() {
-  const { employee, loading, signInWithEmail, signOut } = useSession();
-  const devBypass = import.meta.env.VITE_DEV_EMPLOYEE_ID;
+  const { employee, loading, signOut } = useSession();
 
   if (loading) return <Loading />;
 
-  // No session and no dev bypass -> show sign-in.
-  if (!employee && !devBypass) {
-    return <SignInGate onSignIn={signInWithEmail} />;
-  }
+  // Sign-in gate disabled for the POC: useSession signs in (anonymous) with a
+  // default/dev identity, so the hub loads straight into the Portal. Re-enable
+  // by restoring the `!employee` check + <SignInGate onSignIn={signInWithEmail}/>
+  // (signInWithEmail is still exported from useSession).
 
   // signOut travels with the session so the Portal can offer it from its footer.
   const session = { employee, signOut };

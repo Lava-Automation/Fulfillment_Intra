@@ -11,10 +11,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabase';
 
-// DEV ONLY: lets you act as a specific employee without real magic-link auth,
-// so RLS can be exercised locally. Set VITE_DEV_EMPLOYEE_ID in .env to a
-// spine.employees UUID. Leave it unset in any shared/prod build.
-const DEV_EMPLOYEE_ID = import.meta.env.VITE_DEV_EMPLOYEE_ID || null;
+// POC: act as a fixed employee without real magic-link auth, so the hub loads
+// straight in and RLS works (via anonymous sign-in). VITE_DEV_EMPLOYEE_ID
+// overrides; if unset we fall back to a default employee so the VPS build does
+// not need the env var. Restore `|| null` and re-enable the sign-in gate in
+// mainapp.jsx when real auth is wired.
+const DEV_EMPLOYEE_ID = import.meta.env.VITE_DEV_EMPLOYEE_ID || '0594b223-6f02-4f8e-9876-7f5af128c4de';
 
 export function useSession() {
   const [employee, setEmployee] = useState(null); // { id, name, country, group, department, position, email }
