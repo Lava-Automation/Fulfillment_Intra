@@ -1949,9 +1949,9 @@ export default function App({ session, supabase }) {
   const navTo = (p) => { setPage(p); setOpenAcctId(null); setOpenAcctTab(null); };
   const openAcct = (id, tab) => { setOpenAcctId(id); setOpenAcctTab(tab || null); setPage('accounts'); };
 
-  const PAGE_LABELS = { dashboard:'Dashboard', accounts:'Accounts', vaoverview:'VA Overview', training:'Training Tracker', trainerworkload:'Trainer Workload', lavatrainers:'LAVA Trainers', devsupport:'Dev Support', qaqc:'QAQC', meetings:'Meeting Requests', comms:'Send Communication', docs:'LAVA Docs', incident:'Incident / Postmortem', brainsignals:'Brain Signals Composer', qalog:'QA Defect Log', crmcurriculum:'CRM Training Curriculum' };
+  const PAGE_LABELS = { dashboard:'Dashboard', accounts:'Accounts', clientprofiles:'Client Profiles', vaoverview:'VA Overview', training:'Training Tracker', trainerworkload:'Trainer Workload', lavatrainers:'LAVA Trainers', devsupport:'Dev Support', qaqc:'QAQC', meetings:'Meeting Requests', comms:'Send Communication', docs:'LAVA Docs', incident:'Incident / Postmortem', brainsignals:'Brain Signals Composer', qalog:'QA Defect Log', crmcurriculum:'CRM Training Curriculum' };
   const SB_ITEMS = [
-    { section:'Fulfillment Overview', items:[{page:'dashboard',label:'Dashboard',icon:'◈'},{page:'accounts',label:'Accounts',icon:'⬡',badge:12},{page:'vaoverview',label:'VA Overview',icon:'◉'}] },
+    { section:'Fulfillment Overview', items:[{page:'dashboard',label:'Dashboard',icon:'◈'},{page:'accounts',label:'Accounts',icon:'⬡',badge:12},{page:'clientprofiles',label:'Client Profiles',icon:'⬢'},{page:'vaoverview',label:'VA Overview',icon:'◉'}] },
     // Training apps embedded as Portal pages.
     { section:'Training', items:[{page:'training',label:'Training Tracker',icon:'▤'},{page:'trainerworkload',label:'Trainer Workload',icon:'◔'}] },
     // Dev Support (replacing the old Support Tickets) and QAQC render as Portal
@@ -2004,14 +2004,16 @@ export default function App({ session, supabase }) {
           <div style={{ background:T.surface, borderBottom:`1px solid ${T.border}`, padding:'0 24px', height:50, display:'flex', alignItems:'center', position:'sticky', top:0, zIndex:40 }}>
             <div style={{ ...fm, fontSize:11, color:T.ink3 }}>LAVA Internal / <strong style={{ color:T.ink }}>{topTitle}</strong></div>
           </div>
-          <div style={{ flex:1, padding: (['devsupport','qaqc','accounts','training','trainerworkload'].includes(page)) ? 0 : 24, minWidth:0 }}>
+          <div style={{ flex:1, padding: (['devsupport','qaqc','clientprofiles','training','trainerworkload'].includes(page)) ? 0 : 24, minWidth:0 }}>
             {page === 'devsupport'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Dev Support…</div>}><DevSupportApp session={session} supabase={supabase} /></Suspense>}
             {page === 'qaqc'        && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading QAQC…</div>}><QAQCApp session={session} supabase={supabase} /></Suspense>}
             {page === 'training'         && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Training Tracker…</div>}><TrainingApp session={session} supabase={supabase} /></Suspense>}
             {page === 'trainerworkload'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Trainer Workload…</div>}><TrainerWorkloadApp session={session} supabase={supabase} /></Suspense>}
-            {/* Accounts shows the Client Profiles app. openAcctId (from a Dashboard
-                row) opens that company's profile; otherwise the accounts list. */}
-            {page === 'accounts'    && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Client Profiles…</div>}><ClientProfileApp session={session} supabase={supabase} accountId={openAcctId || undefined} /></Suspense>}
+            {/* Client Profiles is its own page (browse companies -> Company 360). */}
+            {page === 'clientprofiles' && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Client Profiles…</div>}><ClientProfileApp session={session} supabase={supabase} /></Suspense>}
+            {/* Accounts: the Portal's own accounts list + detail (restored). */}
+            {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
+            {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
             {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} supabase={supabase} />}
             {page === 'vaoverview'     && <VAOverviewPage supabase={supabase} />}
             {page === 'lavatrainers'   && <LAVATrainersPage supabase={supabase} />}
