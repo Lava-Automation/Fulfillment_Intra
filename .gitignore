@@ -25,3 +25,7 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# temp extracted app sources (not committed)
+_tt_src/
+_twd_src.jsx

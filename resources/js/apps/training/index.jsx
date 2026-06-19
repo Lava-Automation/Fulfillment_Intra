@@ -1,0 +1,339 @@
+/**
+ * Lava Training Tracker — translated for the hub. Pass 1.
+ *
+ * The teammate's app is a large multi-view tracker (Dashboard, CRM/Insurance/
+ * Broad tracks, Directory, Catalog, Reports, Settings) built on an in-memory
+ * CATALOG + mock trainee progress. Per the playbook + the user's direction:
+ * the course catalog is genuine and now lives in the DB (courses/modules/lessons,
+ * seeded from the app); mock trainee progress is left out (cleared) until real
+ * enrollments exist.
+ *
+ * Pass 1 wires the Course Catalog to the real schema with structure-level CRUD
+ * (create/edit/reorder/delete courses, modules, lessons). Deep lesson content
+ * authoring (blocks, quizzes) has no schema home yet and is deferred. The other
+ * views are placeholders wired in later passes.
+ *
+ * Reads/writes: public.courses / public.modules / public.lessons + activity_log.
+ */
+
+import { useState, useEffect, useCallback } from "react";
+import {
+  LayoutDashboard, Code, Shield, Radio, Contact, BookMarked, BarChart3,
+  Settings as SettingsIcon, Plus, Pencil, Trash2, ChevronUp, ChevronDown,
+  ArrowLeft, BadgeCheck, Search,
+} from "lucide-react";
+import { logActivity } from "../../lib/activity";
+
+const C = {
+  red: "#e73835", ink: "#24242d", teal: "#145365", white: "#ffffff", black: "#1b120b",
+  paper: "#f7f8f8", line: "rgba(36,36,45,0.08)", sub: "#8a8f93", tealSoft: "#e6eef1",
+};
+const FONT = { body: "'Poppins', system-ui, sans-serif", head: "'Monument Extended', 'Poppins', system-ui, sans-serif" };
+
+const NAV = [
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, group: "Training" },
+  { key: "crm", label: "CRM Dev Training", icon: Code, group: "Training" },
+  { key: "insurance", label: "Insurance Training", icon: Shield, group: "Training" },
+  { key: "broad", label: "Broad Market Training", icon: Radio, group: "Training" },
+  { key: "directory", label: "VA Directory", icon: Contact, group: "Manage" },
+  { key: "catalog", label: "Course Catalog", icon: BookMarked, group: "Manage" },
+  { key: "reports", label: "Reports", icon: BarChart3, group: "Manage" },
+  { key: "settings", label: "Settings", icon: SettingsIcon, group: "Admin" },
+];
+const PAGE_META = {
+  dashboard: ["Dashboard", "Training overview"],
+  crm: ["CRM Dev Training", "Combo build track"],
+  insurance: ["Insurance Training", "Gen and handed-off combo VAs"],
+  broad: ["Broad Market Training", "Build-as-you-go, market-wide"],
+  directory: ["VA Directory", "Everyone across the program"],
+  catalog: ["Course Catalog", "Define and maintain courses"],
+  reports: ["Training Reports", "Year to date"],
+  settings: ["Settings", "Auto-enrollment and configuration"],
+};
+// Known categories (free text since the seed/uploads vary). Used in the editor.
+const CATEGORIES = ["crm", "insurance", "automation", "general", "oneoff"];
+const CAT_LABEL = { crm: "CRM", insurance: "Insurance", automation: "Automation", general: "General", oneoff: "One-off" };
+
+const btn = {
+  ghost: { display: "flex", alignItems: "center", gap: 5, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 12, fontWeight: 500, padding: "8px 13px", borderRadius: 8, cursor: "pointer", fontFamily: FONT.body },
+  primary: { display: "flex", alignItems: "center", gap: 5, border: "none", background: C.teal, color: "#fff", fontSize: 12, fontWeight: 600, padding: "8px 14px", borderRadius: 8, cursor: "pointer", fontFamily: FONT.body },
+  row: { display: "flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, background: "#fff", color: C.ink, fontSize: 11, padding: "6px 11px", borderRadius: 7, cursor: "pointer", fontFamily: FONT.body },
+  add: { display: "flex", alignItems: "center", gap: 4, border: "none", background: "#e6eef1", color: C.teal, fontSize: 11, fontWeight: 500, padding: "6px 11px", borderRadius: 7, cursor: "pointer", fontFamily: FONT.body },
+  back: { display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", color: C.teal, fontSize: 12.5, fontWeight: 500, cursor: "pointer", fontFamily: FONT.body, padding: 0 },
+  arrow: { border: "none", background: "transparent", color: "#bbb", cursor: "pointer", display: "flex", padding: 1 },
+  del: { border: "none", background: "transparent", color: "#ccc", cursor: "pointer", display: "flex", padding: 2 },
+};
+const input = { width: "100%", border: `1px solid ${C.line}`, borderRadius: 8, padding: "9px 11px", fontSize: 13, fontFamily: FONT.body, color: C.ink, boxSizing: "border-box", background: "#fff", outline: "none" };
+
+function Sidebar({ nav, setNav }) {
+  const groups = ["Training", "Manage", "Admin"];
+  return (
+    <div style={{ width: 230, flexShrink: 0, background: C.ink, color: "#fff", minHeight: "100vh", position: "sticky", top: 0, display: "flex", flexDirection: "column", fontFamily: FONT.body }}>
+      <div style={{ padding: "20px 20px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 9, height: 26, background: C.red, borderRadius: 2 }} />
+        <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: "-0.02em" }}>Lava Training</div>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "4px 12px" }}>
+        {groups.map((g) => (
+          <div key={g} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.8px", color: "rgba(255,255,255,0.35)", padding: "6px 10px" }}>{g}</div>
+            {NAV.filter((n) => n.group === g).map((n) => {
+              const Icon = n.icon; const on = nav === n.key;
+              return (
+                <button key={n.key} onClick={() => setNav(n.key)} style={{ width: "100%", textAlign: "left", border: "none", background: on ? "rgba(255,255,255,0.1)" : "transparent", color: on ? "#fff" : "rgba(255,255,255,0.65)", fontFamily: FONT.body, fontSize: 12.5, fontWeight: on ? 600 : 500, padding: "9px 10px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 9 }}>
+                  <Icon size={16} strokeWidth={2} /> {n.label}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Placeholder({ title }) {
+  return (
+    <div style={{ background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 12, padding: "56px 24px", textAlign: "center" }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: C.ink, marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 13, color: C.sub, maxWidth: 460, margin: "0 auto", lineHeight: 1.6 }}>
+        This view is wired in a later pass. The course catalog (the foundation both training apps build on) is live now under Course Catalog.
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Catalog (wired to courses/modules/lessons) ----------------
+function Catalog({ supabase, me }) {
+  const [courses, setCourses] = useState([]); // [{...course, modules:[{...module, lessons:[]}]}]
+  const [loading, setLoading] = useState(true);
+  const [editId, setEditId] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [cRes, mRes, lRes] = await Promise.all([
+      supabase.from("courses").select("course_id,name,category,description,cert").order("name", { ascending: true }),
+      supabase.from("modules").select("module_id,course_id,name,position").order("position", { ascending: true }),
+      supabase.from("lessons").select("lesson_id,module_id,name,position").order("position", { ascending: true }),
+    ]);
+    const lessonsByModule = {};
+    (lRes.data || []).forEach((l) => { (lessonsByModule[l.module_id] = lessonsByModule[l.module_id] || []).push(l); });
+    const modulesByCourse = {};
+    (mRes.data || []).forEach((m) => { (modulesByCourse[m.course_id] = modulesByCourse[m.course_id] || []).push({ ...m, lessons: lessonsByModule[m.module_id] || [] }); });
+    setCourses((cRes.data || []).map((c) => ({ ...c, modules: modulesByCourse[c.course_id] || [] })));
+    setLoading(false);
+  }, [supabase]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const log = (action, details) => logActivity({ app: "training", actor: me, action, entityType: "course", entityId: details?.id, details });
+
+  async function createCourse() {
+    const { data, error } = await supabase.from("courses").insert({ name: "New course", category: "oneoff", cert: false }).select("course_id").maybeSingle();
+    if (error) { alert("Could not create course: " + error.message); return; }
+    await log("training.course.created", { id: data?.course_id });
+    await load();
+    setEditId(data?.course_id);
+  }
+
+  if (editId) {
+    const course = courses.find((c) => c.course_id === editId);
+    return <CourseEditor supabase={supabase} me={me} course={course} onBack={() => setEditId(null)} reload={load} />;
+  }
+
+  const q = search.trim().toLowerCase();
+  const groups = CATEGORIES.map((cat) => ({
+    cat,
+    courses: courses.filter((c) => (c.category || "oneoff") === cat && (!q || c.name.toLowerCase().includes(q) || (c.description || "").toLowerCase().includes(q))),
+  })).filter((g) => g.courses.length);
+  // categories present in data but not in the known list
+  const extraCats = [...new Set(courses.map((c) => c.category).filter((cat) => cat && !CATEGORIES.includes(cat)))];
+  extraCats.forEach((cat) => {
+    const cs = courses.filter((c) => c.category === cat && (!q || c.name.toLowerCase().includes(q)));
+    if (cs.length) groups.push({ cat, courses: cs });
+  });
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12 }}>
+        <div style={{ fontSize: 12, color: C.sub, maxWidth: 480, lineHeight: 1.5 }}>The source of truth for all courses and modules. Lesson content (blocks, quizzes) is authored once content uploads land.</div>
+        <button onClick={createCourse} style={btn.primary}><Plus size={13} /> New course</button>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, background: "#fff", border: `1px solid ${C.line}`, borderRadius: 9, padding: "8px 11px", maxWidth: 420, marginBottom: 16 }}>
+        <Search size={14} color={C.sub} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search courses…" style={{ border: "none", outline: "none", fontSize: 12, fontFamily: FONT.body, flex: 1, background: "transparent" }} />
+      </div>
+
+      {loading ? <div style={{ color: C.sub, fontSize: 13, padding: 20 }}>Loading catalog…</div>
+        : groups.length === 0 ? <div style={{ padding: 24, color: C.sub, fontSize: 13, background: "#fff", border: `1px dashed ${C.line}`, borderRadius: 12 }}>No courses yet. Run the catalog seed, or add one.</div>
+        : groups.map((g) => (
+          <div key={g.cat} style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.teal }} />
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.ink }}>{CAT_LABEL[g.cat] || g.cat}</span>
+              <span style={{ fontSize: 10, color: "#bbb" }}>{g.courses.length}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {g.courses.map((co) => {
+                const lessonCount = co.modules.reduce((n, m) => n + m.lessons.length, 0);
+                return (
+                  <div key={co.course_id} onClick={() => setEditId(co.course_id)} style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 11, padding: "13px 16px", cursor: "pointer" }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: C.ink, display: "flex", alignItems: "center", gap: 6 }}>
+                      {co.name}
+                      {co.cert && <span style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#e1f5ee", color: "#0f6e56", fontSize: 9, fontWeight: 600, padding: "2px 7px", borderRadius: 20 }}><BadgeCheck size={10} /> Cert</span>}
+                    </div>
+                    {co.description && <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3, lineHeight: 1.4 }}>{co.description}</div>}
+                    <div style={{ fontSize: 10.5, color: "#aaa", marginTop: 5 }}>{co.modules.length} modules · {lessonCount} lessons</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
+function CourseEditor({ supabase, me, course, onBack, reload }) {
+  const [showSettings, setShowSettings] = useState(false);
+  if (!course) return <div style={{ padding: 20 }}>Course not found.</div>;
+  const log = (action, details) => logActivity({ app: "training", actor: me, action, entityType: "course", entityId: course.course_id, details });
+  const lessonCount = course.modules.reduce((n, m) => n + m.lessons.length, 0);
+
+  const setField = async (field, val) => {
+    const { error } = await supabase.from("courses").update({ [field]: val }).eq("course_id", course.course_id);
+    if (error) { alert("Save failed: " + error.message); return; }
+    await log("training.course.updated", { field }); reload();
+  };
+  const delCourse = async () => {
+    if (!confirm(`Delete "${course.name}" and all its modules and lessons?`)) return;
+    const modIds = course.modules.map((m) => m.module_id);
+    if (modIds.length) await supabase.from("lessons").delete().in("module_id", modIds);
+    await supabase.from("modules").delete().eq("course_id", course.course_id);
+    const { error } = await supabase.from("courses").delete().eq("course_id", course.course_id);
+    if (error) { alert("Delete failed: " + error.message); return; }
+    await log("training.course.deleted", {}); onBack(); reload();
+  };
+  const addModule = async () => {
+    const { error } = await supabase.from("modules").insert({ course_id: course.course_id, name: "New module", position: course.modules.length });
+    if (error) { alert("Add module failed: " + error.message); return; }
+    reload();
+  };
+  const renameModule = async (mid, name) => { await supabase.from("modules").update({ name }).eq("module_id", mid); reload(); };
+  const delModule = async (mid) => {
+    if (!confirm("Delete this module and its lessons?")) return;
+    await supabase.from("lessons").delete().eq("module_id", mid);
+    await supabase.from("modules").delete().eq("module_id", mid); reload();
+  };
+  const addLesson = async (mid, pos) => { await supabase.from("lessons").insert({ module_id: mid, name: "New lesson", position: pos }); reload(); };
+  const renameLesson = async (lid, name) => { await supabase.from("lessons").update({ name }).eq("lesson_id", lid); reload(); };
+  const delLesson = async (lid) => { await supabase.from("lessons").delete().eq("lesson_id", lid); reload(); };
+  // reorder by swapping positions of two rows
+  const swap = async (table, idCol, a, b) => {
+    await supabase.from(table).update({ position: b.position }).eq(idCol, a[idCol]);
+    await supabase.from(table).update({ position: a.position }).eq(idCol, b[idCol]);
+    reload();
+  };
+  const moveModule = (i, dir) => { const j = i + dir; if (j < 0 || j >= course.modules.length) return; swap("modules", "module_id", course.modules[i], course.modules[j]); };
+  const moveLesson = (m, i, dir) => { const j = i + dir; if (j < 0 || j >= m.lessons.length) return; swap("lessons", "lesson_id", m.lessons[i], m.lessons[j]); };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <button onClick={onBack} style={btn.back}><ArrowLeft size={14} /> Back to catalog</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setShowSettings((s) => !s)} style={btn.row}><Pencil size={12} /> Course settings</button>
+          <button onClick={delCourse} style={{ ...btn.row, color: C.red, borderColor: "#f3c9c8" }}><Trash2 size={12} /> Delete</button>
+        </div>
+      </div>
+
+      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "14px 18px", marginBottom: 12 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: C.ink, display: "flex", alignItems: "center", gap: 7 }}>
+          <span style={{ width: 9, height: 9, borderRadius: "50%", background: C.teal }} />
+          {course.name}
+          {course.cert && <span style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#e1f5ee", color: "#0f6e56", fontSize: 9, fontWeight: 600, padding: "2px 7px", borderRadius: 20 }}><BadgeCheck size={10} /> Cert</span>}
+        </div>
+        <div style={{ fontSize: 11, color: C.sub, marginTop: 3 }}>{CAT_LABEL[course.category] || course.category} · {course.modules.length} modules · {lessonCount} lessons</div>
+      </div>
+
+      {showSettings && (
+        <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "16px 20px", marginBottom: 12, maxWidth: 620 }}>
+          <Field label="Course name"><input value={course.name} onChange={(e) => setField("name", e.target.value)} style={input} /></Field>
+          <Field label="Category"><select value={course.category || "oneoff"} onChange={(e) => setField("category", e.target.value)} style={input}>{CATEGORIES.map((k) => <option key={k} value={k}>{CAT_LABEL[k]}</option>)}</select></Field>
+          <Field label="Description"><textarea value={course.description || ""} onChange={(e) => setField("description", e.target.value)} style={{ ...input, minHeight: 56, resize: "vertical" }} /></Field>
+          <Field label="Issues certificate">
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: C.ink, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!course.cert} onChange={(e) => setField("cert", e.target.checked)} /> Earned on completion
+            </label>
+          </Field>
+        </div>
+      )}
+
+      <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, maxWidth: 620 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 600, color: C.sub, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 10 }}>Course outline</div>
+        {course.modules.length === 0 && <div style={{ fontSize: 11.5, color: "#bbb", marginBottom: 10 }}>No modules yet.</div>}
+        {course.modules.map((m, mi) => (
+          <div key={m.module_id} style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 18, height: 18, borderRadius: 5, background: "#eef0f2", color: C.sub, fontSize: 10, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{mi + 1}</span>
+              <input defaultValue={m.name} onBlur={(e) => e.target.value !== m.name && renameModule(m.module_id, e.target.value)} style={{ flex: 1, border: "none", outline: "none", fontSize: 12.5, fontWeight: 600, color: C.ink, fontFamily: FONT.body, background: "transparent", padding: "2px 0" }} />
+              <button onClick={() => moveModule(mi, -1)} style={btn.arrow}><ChevronUp size={13} /></button>
+              <button onClick={() => moveModule(mi, 1)} style={btn.arrow}><ChevronDown size={13} /></button>
+              <button onClick={() => delModule(m.module_id)} style={btn.del}><Trash2 size={12} /></button>
+            </div>
+            <div style={{ paddingLeft: 22, marginTop: 4 }}>
+              {m.lessons.map((l, li) => (
+                <div key={l.lesson_id} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
+                  <span style={{ color: "#cbd0d3", fontSize: 11 }}>•</span>
+                  <input defaultValue={l.name} onBlur={(e) => e.target.value !== l.name && renameLesson(l.lesson_id, e.target.value)} style={{ flex: 1, border: "none", outline: "none", fontSize: 11.5, color: "#555", fontFamily: FONT.body, background: "transparent", padding: "3px 0" }} />
+                  <button onClick={() => moveLesson(m, li, -1)} style={btn.arrow}><ChevronUp size={12} /></button>
+                  <button onClick={() => moveLesson(m, li, 1)} style={btn.arrow}><ChevronDown size={12} /></button>
+                  <button onClick={() => delLesson(l.lesson_id)} style={btn.del}><Trash2 size={11} /></button>
+                </div>
+              ))}
+              <button onClick={() => addLesson(m.module_id, m.lessons.length)} style={{ ...btn.add, marginTop: 4, fontSize: 10.5, padding: "4px 9px" }}><Plus size={11} /> Add lesson</button>
+            </div>
+          </div>
+        ))}
+        <button onClick={addModule} style={{ ...btn.add, marginTop: 6, width: "100%", justifyContent: "center" }}><Plus size={13} /> Add module</button>
+      </div>
+      <div style={{ fontSize: 10, color: "#bbb", marginTop: 12, lineHeight: 1.5, maxWidth: 620 }}>Edits save to the database. Lesson content authoring (text, video, quizzes) comes with content uploads.</div>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 10.5, color: C.sub, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 6 }}>{label}</div>
+      {children}
+    </div>
+  );
+}
+
+// ---------------- Root ----------------
+export default function TrainingApp({ session, supabase }) {
+  const me = session?.employee;
+  const [nav, setNav] = useState("catalog");
+  const [title, sub] = PAGE_META[nav] || ["", ""];
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: C.paper, fontFamily: FONT.body, color: C.ink }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');`}</style>
+      <Sidebar nav={nav} setNav={setNav} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ padding: "26px 32px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 7, height: 26, background: C.red, borderRadius: 2 }} />
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", fontFamily: FONT.head }}>{title}</h1>
+          </div>
+          <p style={{ margin: "6px 0 0 17px", fontSize: 12.5, color: C.sub }}>{sub}</p>
+        </div>
+        <div style={{ padding: "22px 32px 48px" }}>
+          {nav === "catalog" ? <Catalog supabase={supabase} me={me} /> : <Placeholder title={title} />}
+        </div>
+      </div>
+    </div>
+  );
+}

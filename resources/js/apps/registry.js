@@ -27,12 +27,12 @@ export const APPS = [
     path: '/client-profiles',
     component: lazy(() => import('./clientProfile/index.jsx')),
   },
-  // {
-  //   key: 'training',
-  //   label: 'Training Tracker',
-  //   path: '/training',
-  //   component: lazy(() => import('./training/index.jsx')),
-  // },
+  {
+    key: 'training',
+    label: 'Training Tracker',
+    path: '/training',
+    component: lazy(() => import('./training/index.jsx')),
+  },
   // {
   //   key: 'trainerWorkload',
   //   label: 'Trainer Workload',
