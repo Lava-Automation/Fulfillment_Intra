@@ -6,6 +6,7 @@ import { logActivity } from "../../lib/activity";
 // Lazy so each still compiles into its own chunk and only loads on its page.
 const DevSupportApp = lazy(() => import("../devSupport/index.jsx"));
 const QAQCApp = lazy(() => import("../qaqc/index.jsx"));
+const ClientProfileApp = lazy(() => import("../clientProfile/index.jsx"));
 
 // ─────────────────────────────────────────────
 //  THEME TOKENS
@@ -1996,12 +1997,13 @@ export default function App({ session, supabase, navigate }) {
           <div style={{ background:T.surface, borderBottom:`1px solid ${T.border}`, padding:'0 24px', height:50, display:'flex', alignItems:'center', position:'sticky', top:0, zIndex:40 }}>
             <div style={{ ...fm, fontSize:11, color:T.ink3 }}>LAVA Internal / <strong style={{ color:T.ink }}>{topTitle}</strong></div>
           </div>
-          <div style={{ flex:1, padding: (page === 'devsupport' || page === 'qaqc') ? 0 : 24, minWidth:0 }}>
+          <div style={{ flex:1, padding: (page === 'devsupport' || page === 'qaqc' || page === 'accounts') ? 0 : 24, minWidth:0 }}>
             {page === 'devsupport'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Dev Support…</div>}><DevSupportApp session={session} supabase={supabase} /></Suspense>}
             {page === 'qaqc'        && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading QAQC…</div>}><QAQCApp session={session} supabase={supabase} /></Suspense>}
+            {/* Accounts shows the Client Profiles app. openAcctId (from a Dashboard
+                row) opens that company's profile; otherwise the accounts list. */}
+            {page === 'accounts'    && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Client Profiles…</div>}><ClientProfileApp session={session} supabase={supabase} accountId={openAcctId || undefined} /></Suspense>}
             {page === 'dashboard'   && !openAcctId && <Dashboard onNav={navTo} onOpenAcct={openAcct} accounts={accounts} supabase={supabase} />}
-            {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
-            {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} supabase={supabase} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}
             {page === 'vaoverview'     && <VAOverviewPage supabase={supabase} />}
             {page === 'lavatrainers'   && <LAVATrainersPage supabase={supabase} />}
             {page === 'meetings'       && <MeetingsPage session={session} supabase={supabase} />}
