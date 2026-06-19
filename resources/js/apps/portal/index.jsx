@@ -1901,7 +1901,7 @@ function ComingSoonPage({ title, icon, desc }) {
 // ─────────────────────────────────────────────
 //  ROOT APP
 // ─────────────────────────────────────────────
-export default function App({ session, supabase, navigate }) {
+export default function App({ session, supabase }) {
   const me = session?.employee || null;
   const [page, setPage] = useState('dashboard');
   const [openAcctId, setOpenAcctId] = useState(null);
@@ -1993,6 +1993,9 @@ export default function App({ session, supabase, navigate }) {
               <div style={{ fontSize:12, color:'#CCC', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{me?.name || 'Unknown'}</div>
               <div style={{ ...fm, fontSize:10, color:'#666' }}>{me?.position || me?.department || ''}</div>
             </div>
+            {session?.signOut && (
+              <button onClick={() => session.signOut()} title="Sign out" style={{ background:'transparent', color:'#888', border:'1px solid #333', borderRadius:6, padding:'4px 9px', fontSize:10, cursor:'pointer', ...fm }}>Sign out</button>
+            )}
           </div>
         </nav>
 

@@ -1,98 +1,24 @@
 // resources/js/mainapp.jsx
-// The shell. Owns the few genuinely shared concerns and nothing else:
-//   - the Supabase client + session (passed DOWN to apps, never reached for)
-//   - the router and the side-panel switcher
-//   - a per-route error boundary so one app's crash can't blank the hub
-//   - the brand frame
-// Apps are strangers to each other. They receive { session, supabase } and talk
-// only to the shell above and the database below. Keep this file small; a change
-// here affects everyone, which is the one shared single point of failure.
-import React, { Suspense } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { APPS } from './apps/registry';
+// The shell, slimmed to the auth/host wrapper. The Portal is now the sole app
+// and hosts every other app embedded as its own pages, so the shell no longer
+// needs the app-switcher sidebar or the router. It still owns the few genuinely
+// shared concerns: the Supabase client + session (passed DOWN to the Portal),
+// and a top-level error boundary. Keep this file small.
+import React, { Suspense, lazy } from 'react';
 import { useSession } from './lib/useSession';
 import { supabase } from './lib/supabase';
 import { AppErrorBoundary } from './lib/AppErrorBoundary';
 
+const Portal = lazy(() => import('./apps/portal/index.jsx'));
+
 const B = {
   red: '#E73835',
   dark: '#24242D',
-  teal: '#145365',
   white: '#FFFFFF',
-  black: '#1B120B',
 };
 
-function SidePanel({ employee, onSignOut }) {
-  return (
-    <nav style={{
-      width: 220, minWidth: 220, background: B.dark, color: B.white,
-      display: 'flex', flexDirection: 'column', height: '100vh',
-      fontFamily: 'Poppins, system-ui, sans-serif',
-    }}>
-      <div style={{ padding: '20px 18px', fontWeight: 700, fontSize: 18, letterSpacing: 0.5 }}>
-        LAVA <span style={{ color: B.red }}>Fulfillment</span>
-      </div>
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {APPS.map((app) => (
-          <NavLink
-            key={app.key}
-            to={app.path}
-            end={app.path === '/'}
-            style={({ isActive }) => ({
-              display: 'block', padding: '11px 18px', fontSize: 14,
-              color: isActive ? B.white : '#b9b9c2',
-              background: isActive ? B.red : 'transparent',
-              textDecoration: 'none', borderLeft: isActive ? `3px solid ${B.white}` : '3px solid transparent',
-            })}
-          >
-            {app.label}
-          </NavLink>
-        ))}
-      </div>
-      <div style={{ padding: '14px 18px', borderTop: '1px solid #3a3a44', fontSize: 12 }}>
-        <div style={{ color: B.white, fontWeight: 600 }}>{employee?.name || 'Not signed in'}</div>
-        <div style={{ color: '#9a9aa4' }}>{employee?.position || employee?.group || ''}</div>
-        {employee && (
-          <button onClick={onSignOut} style={{
-            marginTop: 8, background: 'transparent', color: '#b9b9c2',
-            border: '1px solid #3a3a44', borderRadius: 6, padding: '4px 10px',
-            fontSize: 12, cursor: 'pointer',
-          }}>Sign out</button>
-        )}
-      </div>
-    </nav>
-  );
-}
-
-function AppArea({ session }) {
-  const location = useLocation();
-  // The shell owns routing; apps receive a navigate() so they can link to other
-  // apps (e.g. the Portal sidebar jumping to /dev-support) without importing the
-  // router themselves.
-  const navigate = useNavigate();
-  return (
-    <main style={{ flex: 1, height: '100vh', overflow: 'auto', background: B.white }}>
-      <Routes>
-        {APPS.map((app) => {
-          const Comp = app.component;
-          return (
-            <Route
-              key={app.key}
-              path={app.path}
-              element={
-                <AppErrorBoundary appName={app.label} routeKey={location.pathname}>
-                  <Suspense fallback={<div style={{ padding: 40, fontFamily: 'Poppins, sans-serif', color: '#777' }}>Loading {app.label}…</div>}>
-                    {/* Apps receive identity, the client, and navigate from the shell. */}
-                    <Comp session={session} supabase={supabase} navigate={navigate} />
-                  </Suspense>
-                </AppErrorBoundary>
-              }
-            />
-          );
-        })}
-      </Routes>
-    </main>
-  );
+function Loading() {
+  return <div style={{ padding: 40, fontFamily: 'Poppins, sans-serif', color: '#777' }}>Loading…</div>;
 }
 
 function SignInGate({ onSignIn }) {
@@ -132,23 +58,21 @@ export default function MainApp() {
   const { employee, loading, signInWithEmail, signOut } = useSession();
   const devBypass = import.meta.env.VITE_DEV_EMPLOYEE_ID;
 
-  if (loading) {
-    return <div style={{ padding: 40, fontFamily: 'Poppins, sans-serif', color: '#777' }}>Loading…</div>;
-  }
+  if (loading) return <Loading />;
 
   // No session and no dev bypass -> show sign-in.
   if (!employee && !devBypass) {
     return <SignInGate onSignIn={signInWithEmail} />;
   }
 
-  const session = { employee };
+  // signOut travels with the session so the Portal can offer it from its footer.
+  const session = { employee, signOut };
 
   return (
-    <BrowserRouter>
-      <div style={{ display: 'flex', fontFamily: 'Poppins, system-ui, sans-serif' }}>
-        <SidePanel employee={employee} onSignOut={signOut} />
-        <AppArea session={session} />
-      </div>
-    </BrowserRouter>
+    <AppErrorBoundary appName="Portal" routeKey="portal">
+      <Suspense fallback={<Loading />}>
+        <Portal session={session} supabase={supabase} />
+      </Suspense>
+    </AppErrorBoundary>
   );
 }
