@@ -58,7 +58,10 @@ const EMP = {
   "3028f71d-fd5a-496b-86dc-f57ee1bf8fc7": { name: "Edmar Quirante", role: "Team Lead", booking: "https://meetings.hubspot.com/edmar-quirante", email: "edmar@lavaautomation.com" },
   "df43ff45-2eb2-4436-b164-a60cc7ed5da1": { name: "Gio Marchan", role: "Sales Development Representative", booking: "https://meetings.hubspot.com/gio-marchan", email: "gio@lavaautomation.com" },
 };
-const nameOf = (id) => (EMP[id] ? EMP[id].name : "Unknown");
+// Real employees loaded from the API populate this at runtime so every nameOf()
+// across the tabs resolves real names; falls back to the mock EMP map.
+let RUNTIME_EMP = {};
+const nameOf = (id) => (RUNTIME_EMP[id]?.name) || (EMP[id] ? EMP[id].name : "Unknown");
 const emailFromName = (name) => {
   const parts = name.toLowerCase().replace(/[^a-z\s]/g, "").trim().split(/\s+/);
   return (parts[0] + (parts.length > 1 ? "." + parts[parts.length - 1] : "")) + "@lavaautomation.com";
@@ -771,7 +774,7 @@ function AsksPanel({ done, toggle }) {
   );
 }
 
-function Overview({ rocks = [], todos = [], setRocks = () => {}, setTodos = () => {}, photos = {}, onJumpToMeetings = () => {} }) {
+function Overview({ rocks = [], todos = [], setRocks = () => {}, setTodos = () => {}, photos = {}, onJumpToMeetings = () => {}, vas = VAS, goals = GOALS, recentMeeting = PINNED_MEETING, vaStartDate = CLIENT.va_start_date }) {
   const [detail, setDetail] = useState(null);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.7fr) minmax(0,1fr)", gap: 18 }}>
@@ -784,23 +787,23 @@ function Overview({ rocks = [], todos = [], setRocks = () => {}, setTodos = () =
       })()}
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
         <Card style={{ borderTop: `3px solid ${B.teal}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: VAS.length ? 14 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: vas.length ? 14 : 0 }}>
             <Headset size={17} color={B.teal} />
             <span style={{ ...DISPLAY, fontSize: 13, color: B.teal }}>Virtual assistant</span>
-            <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: VAS.length ? B.darkBlue : B.red, background: VAS.length ? "rgba(36,36,45,0.07)" : "rgba(231,56,53,0.10)", padding: "4px 12px", borderRadius: 999 }}>{VAS.length ? `Yes · ${VAS.length} deployed` : "No VA deployed yet"}</span>
+            <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: vas.length ? B.darkBlue : B.red, background: vas.length ? "rgba(36,36,45,0.07)" : "rgba(231,56,53,0.10)", padding: "4px 12px", borderRadius: 999 }}>{vas.length ? `Yes · ${vas.length} deployed` : "No VA deployed yet"}</span>
           </div>
-          {VAS.length > 0 && (
+          {vas.length > 0 && (
             <>
-              <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 14 }}>VA support started {CLIENT.va_start_date}.</div>
+              <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 14 }}>VA support started {vaStartDate}.</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 13 }}>
-                {VAS.map((v) => (
+                {vas.map((v) => (
                   <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                     {photos[v.id]
                       ? <img src={photos[v.id]} alt={v.name} style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
                       : <Monogram name={v.name} size={36} bg={B.teal} />}
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, color: B.black, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</div>
-                      <div style={{ fontSize: 11.5, color: N.faint }}>Started {v.started || CLIENT.va_start_date}</div>
+                      <div style={{ fontSize: 11.5, color: N.faint }}>Started {v.started || vaStartDate}</div>
                     </div>
                   </div>
                 ))}
@@ -811,25 +814,34 @@ function Overview({ rocks = [], todos = [], setRocks = () => {}, setTodos = () =
         <Card style={{ borderTop: `3px solid ${B.red}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: B.red, fontWeight: 500, marginBottom: 10 }}>
             <Pin size={13} /><span>Pinned, most recent meeting</span>
-            <span style={{ marginLeft: "auto", color: N.muted, fontWeight: 400, display: "inline-flex", alignItems: "center", gap: 5 }}><CalendarDays size={13} />{PINNED_MEETING.meeting_date}</span>
+            {recentMeeting && <span style={{ marginLeft: "auto", color: N.muted, fontWeight: 400, display: "inline-flex", alignItems: "center", gap: 5 }}><CalendarDays size={13} />{recentMeeting.meeting_date}</span>}
           </div>
-          <div style={{ fontSize: 16, fontWeight: 600, color: B.black, marginBottom: 8 }}>{PINNED_MEETING.title}</div>
-          <div style={{ fontSize: 14, color: N.muted, lineHeight: 1.65, marginBottom: 16 }}>{PINNED_MEETING.summary}</div>
-          <div style={{ ...DISPLAY, fontSize: 11, color: N.muted, marginBottom: 10 }}>Action items</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-            {PINNED_MEETING.action_items.map((a, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
-                <span style={{ width: 17, height: 17, borderRadius: 5, flexShrink: 0, border: a.done ? "none" : `1.5px solid ${N.faint}`, background: a.done ? B.darkBlue : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>{a.done && <Check size={12} color={B.white} strokeWidth={3} />}</span>
-                <span style={{ color: a.done ? N.faint : B.black, textDecoration: a.done ? "line-through" : "none", flex: 1 }}>{a.text}</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: N.muted, fontSize: 12.5 }}><Monogram name={nameOf(a.owner_id)} size={22} /> {nameOf(a.owner_id)}</span>
-              </div>
-            ))}
-          </div>
+          {recentMeeting ? (
+            <>
+              <div style={{ fontSize: 16, fontWeight: 600, color: B.black, marginBottom: 8 }}>{recentMeeting.title}</div>
+              <div style={{ fontSize: 14, color: N.muted, lineHeight: 1.65, marginBottom: 16 }}>{recentMeeting.summary || "No notes recorded."}</div>
+              {(recentMeeting.action_items || []).length > 0 && (
+                <>
+                  <div style={{ ...DISPLAY, fontSize: 11, color: N.muted, marginBottom: 10 }}>Action items</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                    {recentMeeting.action_items.map((a, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14 }}>
+                        <span style={{ width: 17, height: 17, borderRadius: 5, flexShrink: 0, border: a.done ? "none" : `1.5px solid ${N.faint}`, background: a.done ? B.darkBlue : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>{a.done && <Check size={12} color={B.white} strokeWidth={3} />}</span>
+                        <span style={{ color: a.done ? N.faint : B.black, textDecoration: a.done ? "line-through" : "none", flex: 1 }}>{a.text}</span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: N.muted, fontSize: 12.5 }}><Monogram name={nameOf(a.owner_id)} size={22} /> {nameOf(a.owner_id)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          ) : <div style={{ fontSize: 13, color: N.faint }}>No meetings logged for this account yet.</div>}
         </Card>
         <Card>
           <SectionHeading icon={Target}>Client goals</SectionHeading>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {GOALS.map((g, i) => (
+            {goals.length === 0 && <div style={{ fontSize: 13, color: N.faint }}>No goals set yet.</div>}
+            {goals.map((g, i) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14 }}>
                 <span style={{ flex: 1, color: B.black }}>{g.description}</span><Pill status={g.status} />
               </div>
@@ -1150,7 +1162,7 @@ function CancellationRunbook() {
     </Card>
   );
 }
-function General({ client, techTools, setTechTools }) {
+function General({ client, techTools, setTechTools, meetings = MEETINGS, emp = {} }) {
   const [status, setStatus] = useState(client.service_status);
   const [techOpen, setTechOpen] = useState(false);
   const activeTools = techTools && techTools.length ? techTools.map((t) => t.name) : client.tech_tools;
@@ -1177,7 +1189,7 @@ function General({ client, techTools, setTechTools }) {
           <Fact label="Support through" value={client.support_through} />
           <Fact label="Product mix" value={client.product_mix} />
           <Fact label="CRM platform" value={client.platform} />
-          <Fact label="Account owner" value={nameOf("0594b223-6f02-4f8e-9876-7f5af128c4de")} />
+          <Fact label="Account owner" value={client.primary_contact_ids?.[0] ? nameOf(client.primary_contact_ids[0]) : "—"} />
           <Fact label="Deployed virtual assistants" value={String(client.va_count)} />
         </div>
       </Card>
@@ -1209,12 +1221,13 @@ function General({ client, techTools, setTechTools }) {
       <Card>
         <SectionHeading icon={Users}>Staff on this account</SectionHeading>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          {client.team_ids.length === 0 && <div style={{ fontSize: 13, color: N.faint }}>No staff assigned yet.</div>}
           {client.team_ids.map((id) => (
             <div key={id} style={{ display: "flex", alignItems: "center", gap: 11 }}>
               <Monogram name={nameOf(id)} size={34} />
               <div>
                 <div style={{ fontSize: 14, color: B.black, fontWeight: 500 }}>{nameOf(id)}</div>
-                <div style={{ fontSize: 12.5, color: N.muted }}>{EMP[id] ? EMP[id].role : ""}</div>
+                <div style={{ fontSize: 12.5, color: N.muted }}>{emp[id]?.role || (EMP[id] ? EMP[id].role : "")}</div>
               </div>
             </div>
           ))}
@@ -1222,7 +1235,7 @@ function General({ client, techTools, setTechTools }) {
       </Card>
       <Card style={{ gridColumn: "1 / -1" }}>
         <SectionHeading icon={ClipboardList}>Meetings</SectionHeading>
-        <MeetingLog meetings={MEETINGS} />
+        {meetings.length ? <MeetingLog meetings={meetings} /> : <div style={{ fontSize: 13, color: N.faint }}>No meetings logged for this account yet.</div>}
       </Card>
     </div>
     {techOpen && (
@@ -1799,8 +1812,9 @@ function AgencyStaff() {
   );
 }
 
-function People({ client, photos = {}, setPhoto = () => {} }) {
-  const team = Object.entries(EMP).map(([id, e]) => ({ id, ...e }));
+function People({ client, photos = {}, setPhoto = () => {}, team: teamProp, vas: vasProp }) {
+  const team = teamProp || Object.entries(EMP).map(([id, e]) => ({ id, ...e }));
+  const vas = vasProp || VAS;
   const linkStyle = { display: "inline-flex", alignItems: "center", gap: 5, fontFamily: FONT_BODY, fontSize: 11.5, fontWeight: 600, color: B.darkBlue, textDecoration: "none", marginTop: 4 };
   const newHires = [
     { id: "nh1", name: "Jordan Pierce", email: "jordan.pierce@steeleinsurance.com", role: "Personal lines CSR", added: "June 2, 2026", done: 4, modules: 9, sops: ["New client onboarding", "Service request handling"] },
@@ -1815,7 +1829,7 @@ function People({ client, photos = {}, setPhoto = () => {} }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {editing && (() => {
-        const all = [...team, ...VAS.map((v) => ({ ...v, email: emailFromName(v.name) })), ...newHires];
+        const all = [...team, ...vas.map((v) => ({ ...v, email: emailFromName(v.name) })), ...newHires];
         const base = all.find((x) => x.id === editing.id);
         if (!base) return null;
         const person = { ...base, ...(edits[base.id] || {}) };
@@ -1840,10 +1854,10 @@ function People({ client, photos = {}, setPhoto = () => {} }) {
         <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${N.line}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
             <Headset size={14} color={B.teal} />
-            <span style={{ ...DISPLAY, fontSize: 11, color: N.muted }}>Virtual assistants ({VAS.length})</span>
+            <span style={{ ...DISPLAY, fontSize: 11, color: N.muted }}>Virtual assistants ({vas.length})</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 10 }}>
-            {VAS.map((v0) => { const v = { ...v0, email: emailFromName(v0.name), ...(edits[v0.id] || {}) }; return (
+            {vas.map((v0) => { const v = { ...v0, email: emailFromName(v0.name), ...(edits[v0.id] || {}) }; return (
               <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
                 <UploadAvatar name={v.name} size={28} bg={B.teal} photo={photos[v.id]} onUpload={(src) => setPhoto(v.id, src)} />
                 <div onClick={() => setEditing({ id: v.id, fields: VA_FIELDS })} style={{ minWidth: 0, cursor: "pointer" }}>
@@ -2244,7 +2258,7 @@ function MeetingRecap({ meetings = MEETINGS, showPending = true }) {
   );
 }
 
-function MeetingsTab({ tickets, onUpdate, rocks = [], todos = [], issues = [], setRocks = () => {}, setTodos = () => {}, setIssues = () => {}, typeView = "all", setTypeView = () => {} }) {
+function MeetingsTab({ tickets, onUpdate, rocks = [], todos = [], issues = [], setRocks = () => {}, setTodos = () => {}, setIssues = () => {}, typeView = "all", setTypeView = () => {}, meetings = MEETINGS }) {
   const [detail, setDetail] = useState(null);
   const [cadence, setCadence] = useState("Monthly");
   const [confirmed, setConfirmed] = useState({});
@@ -2252,12 +2266,12 @@ function MeetingsTab({ tickets, onUpdate, rocks = [], todos = [], issues = [], s
   const windowDays = cadence === "Quarterly" ? 92 : 31;
   const periodWord = cadence === "Quarterly" ? "quarter" : "month";
   const [deptView, setDeptView] = useState("all");
-  const meetingsView = useMemo(() => MEETINGS.filter((m) => {
+  const meetingsView = useMemo(() => meetings.filter((m) => {
     const deptOk = deptView === "all" ? true : deptView === "fulfillment" ? m.dept === "Fulfillment" : m.dept !== "Fulfillment";
     const isDir = EMP[m.ranBy] && /Director/i.test(EMP[m.ranBy].role || "");
     const typeOk = typeView === "director" ? isDir : true;
     return deptOk && typeOk;
-  }), [deptView, typeView]);
+  }), [deptView, typeView, meetings]);
   const openTix = tickets.filter((t) => t.status === "open");
   const recentClosed = tickets.filter((t) => t.status === "closed" && daysSince(t.closed) != null && daysSince(t.closed) <= windowDays);
   const toggleConf = (id) => setConfirmed((c) => ({ ...c, [id]: !c[id] }));
@@ -4130,6 +4144,64 @@ export default function ClientProfileApp({ session, accountId }) {
   }, []);
 
   const selected = accounts.find((a) => a.id === agencyId) || null;
+
+  // Load the opened account's real 360 data from Laravel.
+  const [profile, setProfile] = useState(null);
+  useEffect(() => {
+    if (!agencyId) { setProfile(null); return; }
+    let alive = true;
+    setProfile(null);
+    (async () => {
+      try {
+        const p = await api.get(`/api/client-profiles/${agencyId}`);
+        RUNTIME_EMP = Object.fromEntries((p.employees || []).map((e) => [e.id, { name: e.name }]));
+        if (alive) setProfile(p);
+      } catch (e) { if (alive) alert("Could not load profile: " + e.message); }
+    })();
+    return () => { alive = false; };
+  }, [agencyId]);
+
+  // Shape the real account data into what the backed tabs expect.
+  const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "—";
+  const realClient = useMemo(() => {
+    if (!profile) return null;
+    const a = profile.account || {};
+    const team = profile.account_team || [];
+    const teamIds = [a.pm_id, ...team.map((t) => t.employee_id)].filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i);
+    const roles = {};
+    team.forEach((t) => { (roles[t.role_group] = roles[t.role_group] || []).push(t.employee_id); });
+    return {
+      company_name: profile.company?.name || selected?.name || "(no agency)",
+      product_mix: a.plan || "—", account_stage: a.stage || "—", service_status: a.service_status || "monthly",
+      start_date: fmtD(a.since_date), va_start_date: fmtD(a.va_start_date), go_live_date: fmtD(a.go_live_date),
+      support_through: fmtD(a.support_through), decision_due_date: fmtD(a.decision_due_date),
+      ad_hoc_prepaid: a.ad_hoc_prepaid || 0, platform: a.crm || a.ams || "—",
+      va_count: (profile.vas || []).filter((v) => v.account_id === agencyId).length,
+      team_ids: teamIds, primary_contact_ids: [a.pm_id].filter(Boolean), roles,
+      tech_tools: a.tech_tools || [], logo_url: null, photo_url: null, photo_release_signed: false, caricature_url: null,
+    };
+  }, [profile, selected, agencyId]);
+  const realMeetings = useMemo(() => (profile?.meetings || []).map((m) => ({
+    date: fmtD(m.meeting_date), type: m.type || "Meeting", title: m.title || "—", status: m.status || "completed",
+    scheduled: null, actual: null, rating: m.rating || 0, notes: m.notes || "",
+    ranBy: null, dept: "", recording: null, transcript: null, attendees: [], wins: [], actionItems: [],
+  })), [profile]);
+  const empMap = useMemo(() => Object.fromEntries((profile?.employees || []).map((e) => [e.id, { name: e.name }])), [profile]);
+  const realVAs = useMemo(() => (profile?.vas || []).filter((v) => v.account_id === agencyId)
+    .map((v) => ({ id: v.employee_id, name: empMap[v.employee_id]?.name || nameOf(v.employee_id), lead: "", title: v.title, started: null })), [profile, empMap, agencyId]);
+  const realTeam = useMemo(() => {
+    if (!profile) return null;
+    const a = profile.account || {}; const team = profile.account_team || [];
+    const ids = [a.pm_id, ...team.map((t) => t.employee_id)].filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i);
+    const roleOf = (id) => id === a.pm_id ? "Project Manager" : (team.find((t) => t.employee_id === id)?.role_group || "");
+    return ids.map((id) => ({ id, name: empMap[id]?.name || nameOf(id), role: roleOf(id), email: "", booking: "" }));
+  }, [profile, empMap]);
+  const realGoals = useMemo(() => (profile?.goals || []).map((g) => ({ description: g.title, status: g.status || "not_started" })), [profile]);
+  const recentMeeting = useMemo(() => {
+    const m = (profile?.meetings || [])[0];
+    return m ? { meeting_date: fmtD(m.meeting_date), title: m.title || "Meeting", summary: m.notes || "", action_items: [] } : null;
+  }, [profile]);
+
   const openAgency = (id) => { setAgencyId(id); setTab("Overview"); setView("profile"); logActivity("client.viewed", "client", id); };
   useEffect(() => {
     const link = document.createElement("link");
@@ -4143,27 +4215,27 @@ export default function ClientProfileApp({ session, accountId }) {
     <div style={{ fontFamily: FONT_BODY, background: "#F4F3F1", minHeight: "100vh", color: B.black }}>
       <div style={{ maxWidth: 1100, margin: "0 auto", background: B.white, minHeight: "100vh", border: `1px solid ${N.line}` }}>
         {view === "profile" ? (
-          !selected ? (
+          (!selected || !profile || !realClient) ? (
             <div style={{ padding: 28, color: N.muted }}>Loading profile…</div>
           ) : (
           <>
-            <Header client={CLIENT} agency={selected} onBack={accountId ? undefined : () => setView("accounts")} logo={logos[selected.id]} onLogo={(src) => setLogos((l) => ({ ...l, [selected.id]: src }))} />
+            <Header client={realClient} agency={selected} onBack={accountId ? undefined : () => setView("accounts")} logo={logos[selected.id]} onLogo={(src) => setLogos((l) => ({ ...l, [selected.id]: src }))} />
             <div style={{ padding: "10px 28px", background: N.fill, borderBottom: `1px solid ${N.line}`, fontSize: 12.5, color: N.muted }}>
-              {selected.name} is connected. The profile body below still shows the worked example; its live data is being wired to the database tab by tab.
+              {selected.name} is connected. Overview, General, People, and Meetings show live data; the remaining tabs still show the worked example while we wire them in.
             </div>
             <>
                 <TabNav active={tab} onChange={setTab} />
                 <div style={{ padding: 28 }}>
-                  {tab === "Overview" && <Overview rocks={rocks} todos={todos} setRocks={setRocks} setTodos={setTodos} photos={photos} onJumpToMeetings={jumpMeetings} />}
+                  {tab === "Overview" && <Overview rocks={rocks} todos={todos} setRocks={setRocks} setTodos={setTodos} photos={photos} onJumpToMeetings={jumpMeetings} vas={realVAs} goals={realGoals} recentMeeting={recentMeeting} vaStartDate={realClient.va_start_date} />}
                   {tab === "LAVA OS" && <LavaOS rocks={rocks} setRocks={setRocks} todos={todos} setTodos={setTodos} issues={issues} setIssues={setIssues} />}
-                  {tab === "General" && <General client={CLIENT} techTools={techTools} setTechTools={setTechTools} />}
+                  {tab === "General" && <General client={realClient} techTools={techTools} setTechTools={setTechTools} meetings={realMeetings} emp={empMap} />}
                   {tab === "CRM" && <CrmSection />}
                   {tab === "Forms" && <FormsTab />}
                   {tab === "Reporting" && <PerformanceTab agency={selected} />}
                   {tab === "Benchmarking" && <PerformanceTab agency={selected} />}
-                  {tab === "Meetings" && <MeetingsTab tickets={tickets} onUpdate={updateTicket} rocks={rocks} todos={todos} issues={issues} setRocks={setRocks} setTodos={setTodos} setIssues={setIssues} typeView={meetingsFilter} setTypeView={setMeetingsFilter} />}
+                  {tab === "Meetings" && <MeetingsTab tickets={tickets} onUpdate={updateTicket} rocks={rocks} todos={todos} issues={issues} setRocks={setRocks} setTodos={setTodos} setIssues={setIssues} typeView={meetingsFilter} setTypeView={setMeetingsFilter} meetings={realMeetings} />}
                   {tab === "Requests" && <RequestsTab tickets={tickets} onUpdate={updateTicket} />}
-                  {tab === "People" && <People client={CLIENT} photos={photos} setPhoto={setPhoto} />}
+                  {tab === "People" && <People client={realClient} photos={photos} setPhoto={setPhoto} team={realTeam} vas={realVAs} />}
                   {tab === "Timeline" && <TimelineGantt rocks={rocks} todos={todos} />}
                 </div>
               </>
