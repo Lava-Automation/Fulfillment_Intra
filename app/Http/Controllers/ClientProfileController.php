@@ -52,7 +52,8 @@ class ClientProfileController extends Controller
         $acct = Account::findOrFail($account);
 
         $company = $acct->hubspot_company_id
-            ? HubspotCompany::where('id', $acct->hubspot_company_id)->first(['name'])
+            ? HubspotCompany::where('id', $acct->hubspot_company_id)
+                ->first(['name', 'phone', 'domain', 'city', 'state'])
             : null;
 
         return response()->json([
@@ -61,9 +62,14 @@ class ClientProfileController extends Controller
                 'cs_status', 'pm_id', 'since_date', 'cancel_date', 'hubspot_company_id',
                 'va_start_date', 'go_live_date', 'support_through', 'decision_due_date',
                 'ad_hoc_prepaid', 'tech_tools',
+                // Universal company-view fields (shared, edit-anywhere):
+                'account_status', 'form_software', 'owner_name', 'address_street',
+                'address_zip', 'google_review_link', 'am_id', 'dev_support_id', 'tl_id',
             ]),
             'company' => $company,
-            'employees' => Employee::get(['id', 'name']),
+            // position is used by the universal edit panel to filter the role
+            // dropdowns (PM / Account Manager / Dev Support / Team Lead).
+            'employees' => Employee::get(['id', 'name', 'position']),
             'vas' => Va::get(['employee_id', 'account_id', 'title', 'status']),
             'meetings' => Meeting::where('account_id', $account)
                 ->orderByDesc('meeting_date')

@@ -30,7 +30,7 @@ class QaqcController extends Controller
             'checklist_url', 'pending_url', 'im_link', 'client_name', 'on_time_override',
         ]);
 
-        $accounts = Account::get(['account_id', 'hubspot_company_id', 'pm_id']);
+        $accounts = Account::get(['account_id', 'hubspot_company_id', 'pm_id', 'crm']);
 
         // Resolve agency names from the linked hubspot companies (server-side join).
         $companyIds = $accounts->pluck('hubspot_company_id')->filter()->unique()->values();
@@ -44,6 +44,16 @@ class QaqcController extends Controller
             'pm_id' => $a->pm_id,
             'agency' => $companyName[$a->hubspot_company_id] ?? '(no agency)',
         ]);
+
+        // CRM is universal: a build shows its ACCOUNT's CRM, not a per-build value.
+        // Override the (legacy) builds.crm column with the account's canonical CRM
+        // so QAQC is consistent with the rest of the hub.
+        $crmByAccount = $accounts->pluck('crm', 'account_id');
+        $builds = $builds->map(function ($b) use ($crmByAccount) {
+            $b->crm = $crmByAccount[$b->account_id] ?? null;
+
+            return $b;
+        });
 
         return response()->json([
             'builds' => $builds,
@@ -76,17 +86,18 @@ class QaqcController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    // Inline single-field edit from the table row (CRM, PM, On Time).
+    // Inline single-field edit from the table row (PM, On Time). CRM is no longer
+    // editable here — it is universal and read from the build's account.
     public function updateField(Request $request, string $build)
     {
         $model = Build::findOrFail($build);
 
         $data = $request->validate([
-            'field' => 'required|in:crm,project_mgr,on_time_override',
+            'field' => 'required|in:project_mgr,on_time_override',
             'value' => 'nullable|string',
         ]);
 
-        $colMap = ['crm' => 'crm', 'project_mgr' => 'pm_id', 'on_time_override' => 'on_time_override'];
+        $colMap = ['project_mgr' => 'pm_id', 'on_time_override' => 'on_time_override'];
         $col = $colMap[$data['field']];
         $value = $data['value'] ?? null;
 
@@ -140,7 +151,6 @@ class QaqcController extends Controller
 
         $data = $request->validate([
             'client_name' => 'nullable|string',
-            'crm' => 'nullable|string',
             'pm_id' => 'nullable|uuid',
             'qa_ids' => 'present|array',
             'qa_ids.*' => 'uuid',
@@ -159,7 +169,6 @@ class QaqcController extends Controller
         $ids = array_values($data['qa_ids']);
         $patch = [
             'client_name' => $data['client_name'] ?? null,
-            'crm' => $data['crm'] ?? null,
             'pm_id' => $data['pm_id'] ?? null,
             'qa_reviewer_ids' => $ids,
             'qa_reviewer_id' => $ids[0] ?? null,
@@ -195,7 +204,6 @@ class QaqcController extends Controller
             'qa_ids' => 'present|array',
             'qa_ids.*' => 'uuid',
             'pm_id' => 'nullable|uuid',
-            'crm' => 'nullable|string',
             'status' => 'required|in:Done,Working On It,Waiting on Client,Pending',
             'client_name' => 'nullable|string',
             'date_start' => 'nullable|date',
@@ -211,7 +219,6 @@ class QaqcController extends Controller
             'qa_reviewer_ids' => $ids,
             'qa_reviewer_id' => $ids[0] ?? null,
             'pm_id' => $data['pm_id'] ?? null,
-            'crm' => $data['crm'] ?? null,
             'status' => $data['status'],
             'client_name' => $data['client_name'] ?? null,
             'issues' => '',

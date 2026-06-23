@@ -27,6 +27,9 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { api } from "../../lib/api";
+// Shared dropdown pool — the "BY CRM" filter reads canonical CRM values from here
+// so QAQC stays consistent with the rest of the hub.
+import { useOptions } from "../../lib/useOptions";
 
 // --- COLOR CONSTANTS (B) ----------------------------------------------------
 const B = {
@@ -49,7 +52,6 @@ const FONT_FACE_CSS = `
 
 // --- WORKFLOW VOCAB (from the sheet, not invented) --------------------------
 const STATUSES = ["Done", "Working On It", "Waiting on Client", "Pending"];
-const CRMS     = ["Agency Zoom", "Insured Mine"];
 
 // --- HELPERS ----------------------------------------------------------------
 const initials = (name) => (name || "?").split(" ").map(w => w[0]).filter(Boolean).join("").slice(0, 2).toUpperCase();
@@ -111,7 +113,7 @@ function OnTimePill({ value }) {
   );
 }
 function CrmChip({ crm }) {
-  const teal = crm === "Insured Mine";
+  const teal = !!crm && crm.toLowerCase().includes("insured");
   return (
     <span style={{
       display: "inline-block", padding: "2px 9px", borderRadius: 6, fontSize: 10, fontWeight: 600,
@@ -339,10 +341,10 @@ function BuildDrawer({ build, onClose, onSave, vaOptions, pmOptions, qaOptions }
             </div>
           </div>
 
-          {/* CRM + PM */}
+          {/* CRM (read-only, from the account) + PM */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
             <div><span style={labelStyle}>CRM</span>
-              <select style={inputStyle} value={f.crm} onChange={e => set("crm", e.target.value)}>{CRMS.map(c => <option key={c}>{c}</option>)}</select>
+              <div style={{ ...inputStyle, background: "#F7F7FC", color: "#666", display: "flex", alignItems: "center" }}>{f.crm || "—"}</div>
             </div>
             <div><span style={labelStyle}>Project Mgr</span>
               <select style={inputStyle} value={f.project_mgr} onChange={e => set("project_mgr", e.target.value)}>{pmNames.map(p => <option key={p}>{p}</option>)}</select>
@@ -423,7 +425,6 @@ function NewBuildModal({ onClose, onSubmit, accounts, vaOptions, pmOptions, qaOp
   const [f, setF] = useState({
     account: accounts[0]?.name || "",
     client_name: "",
-    crm: "Agency Zoom",
     project_mgr: pmOptions[0]?.name || "",
     va_name: vaOptions[0]?.name || "",
     qa_ids: [],
@@ -444,7 +445,6 @@ function NewBuildModal({ onClose, onSubmit, accounts, vaOptions, pmOptions, qaOp
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div><label style={labelStyle}>Account *</label><select style={inputStyle} value={f.account} onChange={e => set("account", e.target.value)}>{accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div>
             <div><label style={labelStyle}>Client name</label><input style={inputStyle} value={f.client_name} onChange={e => set("client_name", e.target.value)} placeholder="Optional" /></div>
-            <div><label style={labelStyle}>CRM *</label><select style={inputStyle} value={f.crm} onChange={e => set("crm", e.target.value)}>{CRMS.map(c => <option key={c}>{c}</option>)}</select></div>
             <div><label style={labelStyle}>Project Mgr *</label><select style={inputStyle} value={f.project_mgr} onChange={e => set("project_mgr", e.target.value)}>{pmOptions.map(c => <option key={c.id}>{c.name}</option>)}</select></div>
             <div><label style={labelStyle}>VA (built by) *</label><select style={inputStyle} value={f.va_name} onChange={e => set("va_name", e.target.value)}>{vaOptions.map(c => <option key={c.id}>{c.name}</option>)}</select></div>
             <div><label style={labelStyle}>QA Reviewers</label><div style={{ ...inputStyle, display: "flex", alignItems: "center", minHeight: 37 }}><MultiSelect valueIds={f.qa_ids} options={qaOptions} onChange={ids => set("qa_ids", ids)} placeholder="Select reviewers" /></div></div>
@@ -470,6 +470,13 @@ function NewBuildModal({ onClose, onSubmit, accounts, vaOptions, pmOptions, qaOp
 // --- MAIN APP ---------------------------------------------------------------
 export default function QAQCTracker({ session, supabase }) {
   const me = session?.employee;
+  const { options } = useOptions();
+  // Canonical CRM values for the filter; fall back to whatever the builds carry
+  // if the pool has not loaded yet.
+  const crmList = useMemo(() => {
+    const pool = (options.crm || []).map(o => o.value);
+    return pool.length ? pool : [];
+  }, [options]);
 
   const [builds, setBuilds]       = useState([]);
   const [accounts, setAccounts]   = useState([]);  // [{id,name}]
@@ -573,9 +580,10 @@ export default function QAQCTracker({ session, supabase }) {
     catch (e) { alert("Could not update status: " + e.message); }
   }
 
-  // Inline field edits from the table row (CRM, PM, On Time).
+  // Inline field edits from the table row (PM, On Time). CRM is universal now —
+  // it is read from the build's account, not edited per build.
   async function handleField(id, field, value) {
-    if (!["crm", "project_mgr", "on_time_override"].includes(field)) return;
+    if (!["project_mgr", "on_time_override"].includes(field)) return;
     // For PM, send the UUID; otherwise the literal value. `label` is logged as-is.
     const out = field === "project_mgr" ? (pmIdByName[value] ?? null) : value;
     try { await api.patch(`/api/qaqc/builds/${id}/field`, { field, value: out, label: value }); load(); }
@@ -593,7 +601,6 @@ export default function QAQCTracker({ session, supabase }) {
   async function handleSaveBuild(id, form) {
     const patch = {
       client_name: form.client_name || null,
-      crm: form.crm || null,
       pm_id: pmIdByName[form.project_mgr] ?? null,
       qa_ids: form.qa_ids || [],
       va_id: vaIdByName[form.va_name] ?? null,
@@ -617,7 +624,6 @@ export default function QAQCTracker({ session, supabase }) {
       va_id: vaIdByName[f.va_name] ?? null,
       qa_ids: f.qa_ids || [],
       pm_id: pmIdByName[f.project_mgr] ?? null,
-      crm: f.crm,
       status: f.status,
       client_name: f.client_name || null,
       date_start: f.date_start || null,
@@ -676,7 +682,7 @@ export default function QAQCTracker({ session, supabase }) {
 
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1.5px", textTransform: "uppercase", color: "#555", marginBottom: 8 }}>BY CRM</div>
-            {["All", ...CRMS].map(c => (
+            {["All", ...Array.from(new Set([...crmList, ...builds.map(b => b.crm).filter(Boolean)]))].map(c => (
               <div key={c} onClick={() => setCrm(c)} style={{ display: "flex", justifyContent: "space-between", padding: "6px 10px", borderRadius: 7, cursor: "pointer", marginBottom: 2, background: crmFilter === c ? "rgba(255,255,255,0.08)" : "transparent" }}>
                 <span style={{ fontSize: 11, color: "#CCC" }}>{c}</span>
                 <span style={{ fontSize: 11, fontWeight: 700, color: B.white }}>{c === "All" ? builds.length : builds.filter(b => b.crm === c).length}</span>
@@ -723,7 +729,7 @@ export default function QAQCTracker({ session, supabase }) {
               <thead>
                 <tr style={{ background: B.white, position: "sticky", top: 0, zIndex: 2, boxShadow: "0 1px 0 #E0E0E8" }}>
                   {th("Agency / Client", "The agency build under review, and the client contact name if there is one.")}
-                  {th("CRM", "Which CRM the build lives in — Agency Zoom or Insured Mine.")}
+                  {th("CRM", "The agency's CRM, from the account. Shared across the hub; change it in the Client Profile.")}
                   {th("PM", "Project Manager overseeing the build.")}
                   {th("VA", "The virtual assistant who built it. Flagged if no VA is linked.")}
                   {th("QA", "Who reviewed the build.")}
@@ -747,7 +753,7 @@ export default function QAQCTracker({ session, supabase }) {
                         {b.client_name ? <div style={{ fontSize: 10, color: "#9090A8" }}>{b.client_name}</div> : null}
                       </td>
                       <td style={{ padding: "12px 14px" }}>
-                        <InlineSelect value={b.crm} options={CRMS} onChange={v => handleField(b.id, "crm", v)} render={v => <CrmChip crm={v} />} />
+                        <CrmChip crm={b.crm} />
                       </td>
                       <td style={{ padding: "12px 14px" }}>
                         <InlineSelect value={b.project_mgr} options={pmOptions.map(o => o.name)} onChange={v => handleField(b.id, "project_mgr", v)} />

@@ -37,6 +37,9 @@ import {
 // The richer tabs still render the owner's worked-example sample in-session;
 // they get wired to the API and persisted in later passes.
 import { api } from "../../lib/api";
+// Universal dropdown pool (shared across every app). Values come from
+// public.option_set via /api/options and are cached once for the whole SPA.
+import { useOptions } from "../../lib/useOptions";
 
 // Brand floor — Lava Brand Guide 2.0.
 const B = { red: "#E73835", darkBlue: "#24242D", teal: "#145365", white: "#FFFFFF", black: "#1B120B" };
@@ -1162,13 +1165,138 @@ function CancellationRunbook() {
     </Card>
   );
 }
-function General({ client, techTools, setTechTools, meetings = MEETINGS, emp = {} }) {
+// ── Company essentials (UNIVERSAL, edit-anywhere) ──────────────────
+// The standard company-view fields that live on the one accounts row every app
+// reads. Editing here PATCHes /api/accounts/{id}/universal, so the change shows
+// up in the Portal, Dev Support, QAQC — anywhere that reads the account.
+// Dropdowns read the shared option_set pool; people read spine.employees,
+// filtered by position. Company name/phone/website/city/state are mirrored from
+// HubSpot and shown read-only (HubSpot supersedes edits).
+const UNIV_SELECTS = [
+  { key: "plan", label: "Plan", cat: "plan" },
+  { key: "fulfillment", label: "Fulfillment", cat: "fulfillment_status" },
+  { key: "account_status", label: "Account status", cat: "account_status" },
+  { key: "cs_status", label: "Customer success", cat: "cs_status" },
+  { key: "crm", label: "CRM", cat: "crm" },
+  { key: "ams", label: "AMS", cat: "ams" },
+  { key: "form_software", label: "Form software", cat: "form_software" },
+];
+const UNIV_PEOPLE = [
+  { key: "pm_id", label: "Project Manager", kw: "project manager" },
+  { key: "am_id", label: "Account Manager", kw: "account manager" },
+  { key: "dev_support_id", label: "Dev Support", kw: "dev support" },
+  { key: "tl_id", label: "Team Lead", kw: "team lead" },
+];
+const UNIV_TEXT = [
+  { key: "owner_name", label: "Agency owner" },
+  { key: "google_review_link", label: "Google review link" },
+  { key: "address_street", label: "Street address" },
+  { key: "address_zip", label: "ZIP" },
+];
+const UNIV_KEYS = [...UNIV_SELECTS, ...UNIV_PEOPLE, ...UNIV_TEXT].map((d) => d.key);
+
+function UniversalFields({ account = {}, company, employees = [], options = {}, accountId, onSaved }) {
+  const seed = () => Object.fromEntries(UNIV_KEYS.map((k) => [k, account[k] ?? ""]));
+  const [form, setForm] = useState(seed);
+  const [saving, setSaving] = useState(false);
+  // Re-seed when a different account loads (or a save refreshes it).
+  useEffect(() => { setForm(seed()); /* eslint-disable-next-line */ }, [account]);
+
+  const dirty = UNIV_KEYS.some((k) => (form[k] ?? "") !== (account[k] ?? ""));
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const sel = { width: "100%", boxSizing: "border-box", fontFamily: FONT_BODY, fontSize: 13.5, color: B.black, border: `1px solid ${N.line}`, borderRadius: 8, padding: "8px 10px", background: B.white };
+  const lbl = { ...DISPLAY, fontSize: 9.5, color: N.faint, marginBottom: 5, display: "block" };
+
+  const peopleFor = (kw) => {
+    const m = employees.filter((e) => (e.position || "").toLowerCase().includes(kw));
+    return m.length ? m : employees;
+  };
+
+  const valuesFor = (cat) => {
+    const list = (options[cat] || []).map((o) => o.value);
+    const cur = account[cat]; // keep a legacy/off-list value visible instead of silently dropping it
+    return cur && !list.includes(cur) ? [cur, ...list] : list;
+  };
+
+  const save = async () => {
+    const patch = {};
+    UNIV_KEYS.forEach((k) => {
+      const next = form[k] ?? "";
+      if (next !== (account[k] ?? "")) patch[k] = next === "" ? null : next;
+    });
+    if (!Object.keys(patch).length) return;
+    setSaving(true);
+    try {
+      await api.patch(`/api/accounts/${accountId}/universal`, patch);
+      if (onSaved) await onSaved();
+    } catch (e) {
+      alert("Could not save company details: " + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card style={{ gridColumn: "1 / -1" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <SectionHeading icon={Building2}>Company essentials</SectionHeading>
+        <button onClick={save} disabled={!dirty || saving} style={{ marginLeft: "auto", fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: 600, color: B.white, background: dirty && !saving ? B.red : N.line, border: "none", borderRadius: 8, padding: "8px 16px", cursor: dirty && !saving ? "pointer" : "default" }}>
+          {saving ? "Saving…" : dirty ? "Save changes" : "Saved"}
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: N.faint, marginBottom: 14 }}>
+        These fields are shared across the whole hub. A change here shows up wherever this agency appears.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+        {UNIV_SELECTS.map((d) => (
+          <div key={d.key}>
+            <span style={lbl}>{d.label}</span>
+            <select value={form[d.key] ?? ""} onChange={(e) => set(d.key, e.target.value)} style={sel}>
+              <option value="">—</option>
+              {valuesFor(d.cat).map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+          </div>
+        ))}
+        {UNIV_PEOPLE.map((d) => (
+          <div key={d.key}>
+            <span style={lbl}>{d.label}</span>
+            <select value={form[d.key] ?? ""} onChange={(e) => set(d.key, e.target.value)} style={sel}>
+              <option value="">Unassigned</option>
+              {peopleFor(d.kw).map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+          </div>
+        ))}
+        {UNIV_TEXT.map((d) => (
+          <div key={d.key}>
+            <span style={lbl}>{d.label}</span>
+            <input value={form[d.key] ?? ""} onChange={(e) => set(d.key, e.target.value)} placeholder="—" style={sel} />
+          </div>
+        ))}
+      </div>
+      {company && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${N.line}` }}>
+          <div style={{ ...DISPLAY, fontSize: 9.5, color: N.faint, marginBottom: 8 }}>From HubSpot (read-only)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 22px", fontSize: 13, color: N.muted }}>
+            <span><b style={{ color: B.black, fontWeight: 600 }}>{company.name || "—"}</b></span>
+            {company.phone && <span>{company.phone}</span>}
+            {company.website && <span>{company.website}</span>}
+            {(company.city || company.state) && <span>{[company.city, company.state].filter(Boolean).join(", ")}</span>}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function General({ client, account, company, employees, options, accountId, onSaved, techTools, setTechTools, meetings = MEETINGS, emp = {} }) {
   const [status, setStatus] = useState(client.service_status);
   const [techOpen, setTechOpen] = useState(false);
   const activeTools = techTools && techTools.length ? techTools.map((t) => t.name) : client.tech_tools;
   return (
     <>
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 18 }}>
+      {account && <UniversalFields account={account} company={company} employees={employees} options={options} accountId={accountId} onSaved={onSaved} />}
       <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <span style={{ ...DISPLAY, fontSize: 10.5, color: N.faint }}>Preview status, demo</span>
         <SegToggle value={status} onChange={setStatus} options={[
@@ -4123,6 +4251,8 @@ export default function ClientProfileApp({ session, accountId }) {
   const [rocks, setRocks] = useState(() => ROCKS_SEED.map((r) => ({ ...r })));
   const [todos, setTodos] = useState(() => TODOS_SEED.map((t) => ({ ...t })));
   const [issues, setIssues] = useState(() => ISSUES_SEED.map((x) => ({ ...x })));
+  // Shared dropdown pool (plan, statuses, CRM/AMS/forms) for the universal panel.
+  const { options } = useOptions();
 
   // Real accounts list from Laravel. No Supabase in the browser.
   useEffect(() => {
@@ -4160,6 +4290,17 @@ export default function ClientProfileApp({ session, accountId }) {
     })();
     return () => { alive = false; };
   }, [agencyId]);
+
+  // Re-fetch the open account in place (no loading flash) after a universal save,
+  // so the edit reflects across every tab that reads this account.
+  const reloadProfile = async () => {
+    if (!agencyId) return;
+    try {
+      const p = await api.get(`/api/client-profiles/${agencyId}`);
+      RUNTIME_EMP = Object.fromEntries((p.employees || []).map((e) => [e.id, { name: e.name }]));
+      setProfile(p);
+    } catch (e) { alert("Could not refresh profile: " + e.message); }
+  };
 
   // Shape the real account data into what the backed tabs expect.
   const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "—";
@@ -4228,7 +4369,7 @@ export default function ClientProfileApp({ session, accountId }) {
                 <div style={{ padding: 28 }}>
                   {tab === "Overview" && <Overview rocks={rocks} todos={todos} setRocks={setRocks} setTodos={setTodos} photos={photos} onJumpToMeetings={jumpMeetings} vas={realVAs} goals={realGoals} recentMeeting={recentMeeting} vaStartDate={realClient.va_start_date} />}
                   {tab === "LAVA OS" && <LavaOS rocks={rocks} setRocks={setRocks} todos={todos} setTodos={setTodos} issues={issues} setIssues={setIssues} />}
-                  {tab === "General" && <General client={realClient} techTools={techTools} setTechTools={setTechTools} meetings={realMeetings} emp={empMap} />}
+                  {tab === "General" && <General client={realClient} account={profile.account} company={profile.company} employees={profile.employees} options={options} accountId={agencyId} onSaved={reloadProfile} techTools={techTools} setTechTools={setTechTools} meetings={realMeetings} emp={empMap} />}
                   {tab === "CRM" && <CrmSection />}
                   {tab === "Forms" && <FormsTab />}
                   {tab === "Reporting" && <PerformanceTab agency={selected} />}
