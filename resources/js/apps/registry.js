@@ -7,14 +7,13 @@
 import { lazy } from 'react';
 
 // NOTE: each app's root lives at resources/js/apps/<folder>/index.jsx and is the
-// translated version of the teammate's file (static arrays swapped for Supabase
-// reads, identity from the shell, writes paired with activity_log). The raw
-// teammate file is NOT imported directly.
+// translated version of the teammate's file (static arrays swapped for Laravel
+// /api reads via lib/api.js, identity from the shell, writes through the API which
+// records activity_log server-side). The raw teammate file is NOT imported directly.
 export const APPS = [
-  // Only devSupport is translated so far. The entries below are commented out
-  // until each app's folder exists at resources/js/apps/<app>/index.jsx —
-  // otherwise the lazy import resolves to a missing file and the build fails.
-  // Uncomment each as it is translated (portal first; it owns '/').
+  // All apps below are translated and live. Each entry maps key/label/path to a
+  // lazy import so the app compiles into its own chunk and loads on demand. The
+  // Portal owns '/' and hosts the others as embedded pages.
   {
     key: 'portal',
     label: 'Portal',

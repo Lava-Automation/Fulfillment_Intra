@@ -1869,7 +1869,7 @@ function ComingSoonPage({ title, icon, desc }) {
 // ─────────────────────────────────────────────
 //  ROOT APP
 // ─────────────────────────────────────────────
-export default function App({ session, supabase }) {
+export default function App({ session }) {
   const me = session?.employee || null;
   const [page, setPage] = useState('dashboard');
   const [openAcctId, setOpenAcctId] = useState(null);
@@ -1962,12 +1962,12 @@ export default function App({ session, supabase }) {
             <div style={{ ...fm, fontSize:11, color:T.ink3 }}>LAVA Internal / <strong style={{ color:T.ink }}>{topTitle}</strong></div>
           </div>
           <div style={{ flex:1, padding: (['devsupport','qaqc','clientprofiles','training','trainerworkload'].includes(page)) ? 0 : 24, minWidth:0 }}>
-            {page === 'devsupport'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Dev Support…</div>}><DevSupportApp session={session} supabase={supabase} /></Suspense>}
-            {page === 'qaqc'        && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading QAQC…</div>}><QAQCApp session={session} supabase={supabase} /></Suspense>}
-            {page === 'training'         && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Training Tracker…</div>}><TrainingApp session={session} supabase={supabase} /></Suspense>}
-            {page === 'trainerworkload'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Trainer Workload…</div>}><TrainerWorkloadApp session={session} supabase={supabase} /></Suspense>}
+            {page === 'devsupport'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Dev Support…</div>}><DevSupportApp session={session} /></Suspense>}
+            {page === 'qaqc'        && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading QAQC…</div>}><QAQCApp session={session} /></Suspense>}
+            {page === 'training'         && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Training Tracker…</div>}><TrainingApp session={session} /></Suspense>}
+            {page === 'trainerworkload'  && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Trainer Workload…</div>}><TrainerWorkloadApp session={session} /></Suspense>}
             {/* Client Profiles is its own page (browse companies -> Company 360). */}
-            {page === 'clientprofiles' && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Client Profiles…</div>}><ClientProfileApp session={session} supabase={supabase} /></Suspense>}
+            {page === 'clientprofiles' && <Suspense fallback={<div style={{ padding:24, ...fm, color:T.ink3 }}>Loading Client Profiles…</div>}><ClientProfileApp session={session} /></Suspense>}
             {/* Accounts: the Portal's own accounts list + detail (restored). */}
             {page === 'accounts'    && !openAcctId && <AccountsPage onOpenAcct={openAcct} accounts={accounts} />}
             {page === 'accounts'    && openAcctId  && <AccountDetail acctId={openAcctId} accounts={accounts} onBack={() => { setOpenAcctId(null); setOpenAcctTab(null); }} initialTab={openAcctTab} />}

@@ -5,7 +5,7 @@
   directory data. Those live on the spine and are mirrored in.
 
   Contract this app holds with the rest of the platform:
-    • supabase     — shared spine client; session arrives via the intranet shell
+    • data layer   — Laravel /api endpoints via lib/api.js (no browser DB client); session arrives via the intranet shell
     • employees    — read-only mirror, source of truth lives on the spine
     • role_grants  — read-only; drives who can see which client
     • activity_log — append-only, every meaningful action lands here (spine-owned)

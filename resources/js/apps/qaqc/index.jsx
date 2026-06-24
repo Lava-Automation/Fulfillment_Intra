@@ -468,7 +468,7 @@ function NewBuildModal({ onClose, onSubmit, accounts, vaOptions, pmOptions, qaOp
 }
 
 // --- MAIN APP ---------------------------------------------------------------
-export default function QAQCTracker({ session, supabase }) {
+export default function QAQCTracker({ session }) {
   const me = session?.employee;
   const { options } = useOptions();
   // Canonical CRM values for the filter; fall back to whatever the builds carry

@@ -2,8 +2,8 @@
 // The shell, slimmed to the auth/host wrapper. The Portal is now the sole app
 // and hosts every other app embedded as its own pages, so the shell no longer
 // needs the app-switcher sidebar or the router. It still owns the few genuinely
-// shared concerns: the Supabase client + session (passed DOWN to the Portal),
-// and a top-level error boundary. Keep this file small.
+// shared concerns: the session (resolved server-side, passed DOWN to the
+// Portal) and a top-level error boundary. Keep this file small.
 import React, { Suspense, lazy } from 'react';
 import { useSession } from './lib/useSession';
 import { AppErrorBoundary } from './lib/AppErrorBoundary';
@@ -58,10 +58,11 @@ export default function MainApp() {
 
   if (loading) return <Loading />;
 
-  // Sign-in gate disabled for the POC: useSession signs in (anonymous) with a
-  // default/dev identity, so the hub loads straight into the Portal. Re-enable
-  // by restoring the `!employee` check + <SignInGate onSignIn={signInWithEmail}/>
-  // (signInWithEmail is still exported from useSession).
+  // Identity is resolved on the server: Laravel's magic-link login gate (/login)
+  // authenticates the user, and welcome.blade.php injects it as window.__AUTH__,
+  // which useSession reads synchronously. The hub loads straight into the Portal.
+  // The React SignInGate below is legacy (login now lives in Laravel) and is left
+  // for reference only; it is not rendered.
 
   // signOut travels with the session so the Portal can offer it from its footer.
   const session = { employee, signOut };

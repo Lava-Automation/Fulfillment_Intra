@@ -3,9 +3,10 @@
 Context handoff for Claude Code. Read this first. It carries every decision made
 so far so you continue in the same shape without re-deriving anything.
 
-_Stack reality: Laravel 13 + Vite shell, React apps, Supabase Postgres as the
-data layer (apps call it directly). This supersedes any earlier note that
-assumed Supabase-only with no Laravel._
+_Stack reality: Laravel 13 + Vite shell, React apps, Postgres (hosted on
+Supabase) as the data layer. The browser never calls the database directly — it
+goes through Laravel `/api/*` endpoints. This supersedes any earlier note that
+had React calling Supabase from the browser with the anon key._
 
 ## What this is
 
@@ -25,31 +26,34 @@ spine is a config swap, not a rewrite. It must be usable internally today.
 
 ## The two decisions that govern everything (locked)
 
-**1. React calls Supabase directly from the browser with the anon key; RLS
-enforces access.** Laravel only serves the shell. This is the spine-faithful
-shape: anon key in the client is safe because RLS decides what returns, and at
-cutover only the Supabase URL/key change. Hard line: no Anthropic key and no
-service-role operation in the browser, ever. If a teammate's app needs AI or a
-secret-holding call before the spine exists, that one feature waits or gets a
-tiny dedicated endpoint; it does not drag the data layer behind Laravel.
+**1. React talks to Laravel `/api/*`; Laravel talks to Postgres.** The browser
+holds no database client and no keys. Every app fetches JSON from Laravel
+endpoints (through `lib/api.js`) and mutates with POST/PATCH/DELETE; the
+controller does the DB write and the `activity_log` insert. Access is enforced
+server-side in Laravel (and ultimately the spine), not by the browser. Hard line:
+no Anthropic key and no service-role secret in the browser, ever. At cutover to
+the company spine, the endpoints/connection swap; the app code does not.
 
-**2. The side panel routes by path with React Router.** Each app has a URL
-(`/qaqc`, `/training`, ...), so links are shareable, the back button works, and
-routes code-split per app. Not an in-memory switch.
+**2. The Portal is the host; navigation is in-app.** The Portal owns the home
+and embeds every other app as a lazy-loaded page, switching between them in
+memory. Laravel serves the same SPA shell for every path (the `/{any?}`
+catch-all behind auth), so deep links and refreshes still boot the app. Each app
+is a separate chunk that loads on demand.
 
 ## Structure: encapsulated apps under a thin shell
 
 The shape is "shell owns the shared floor, apps are strangers to each other."
 
-- `mainapp.jsx` is the shell. It owns the only genuinely shared things: the
-  Supabase client, the session, the router, the side panel, the brand frame,
-  and a per-route error boundary. Keep it small. A change here affects everyone;
-  that is the one shared single point of failure.
+- `mainapp.jsx` is the shell, slimmed to an auth/host wrapper. It owns the
+  session (resolved server-side) and a top-level error boundary, then renders the
+  Portal, which hosts every other app. Keep it small. A change here affects
+  everyone; that is the one shared single point of failure.
 - Each app lives in its own folder `resources/js/apps/<app>/index.jsx`, exports
   one root component, and is **lazy-loaded** so it compiles into its own chunk
   and only loads when its route opens.
-- Apps never import each other. They receive `{ session, supabase }` as props
-  from the shell and talk only to the shell above and the database below.
+- Apps never import each other. They receive `{ session }` as a prop from the
+  host and talk only to the host above and the Laravel `/api` below (through
+  `lib/api.js`). No app imports a database client.
 - Each route is wrapped in `AppErrorBoundary`. An uncaught crash in one app
   shows a fallback in that panel; the side panel and every other app keep
   working. This is the runtime blast-radius isolation.
@@ -61,50 +65,54 @@ What each isolation layer actually buys, stated honestly:
 - Build isolation: from lazy per-route imports. A broken import fails only that
   chunk, not the whole build.
 - Data isolation: NOT from the front end. All apps share one database; data
-  separation is whatever RLS enforces. A missing policy is a hole regardless of
-  how clean the front end is. Front end protects against code/crash leakage; the
-  database protects against data leakage. Both layers must hold.
+  separation is enforced server-side in Laravel (the controllers/endpoints), and
+  on the eventual spine. The front end protects against code/crash leakage; the
+  backend protects against data leakage. Both layers must hold.
 
 ## File map (scaffold)
 
 ```
 resources/js/
   app.jsx                     Vite entry; imports and renders mainapp. Stays tiny.
-  mainapp.jsx                 The shell: side panel, router, session, error boundaries.
+  mainapp.jsx                 The shell: session + top-level error boundary; renders the Portal host.
   lib/
-    supabase.js               The one client. Knows the project URL + anon key.
-    useSession.js             The one identity source. Maps auth user -> spine.employees.
-    activity.js               Append-only activity_log writer.
+    api.js                    The one client->Laravel helper (GET/POST/PATCH/DELETE, session cookie + CSRF).
+    useSession.js             The one identity source. Reads window.__AUTH__ (injected by the server).
+    useOptions.js             Cached fetch of the shared option_set dropdown pool (/api/options).
     AppErrorBoundary.jsx      Per-route crash isolation.
   apps/
     registry.js               Declares each app: key, label, path, lazy import.
+    portal/index.jsx          The host app; embeds the others as pages.
     devSupport/index.jsx      Example translated app (the pattern to copy).
     <others>/index.jsx        One folder per app.
-resources/views/welcome.blade.php   Mount point. @viteReactRefresh before @vite.
+app/Http/Controllers/         The Laravel API: one controller per app, plus AccountController/OptionController.
+routes/web.php + routes/api/  The endpoint map (web.php auto-loads routes/api/*.php).
+resources/views/welcome.blade.php   Mount point; injects window.__AUTH__. @viteReactRefresh before @vite.
 ```
 
-## Supabase setup
+## Backend and database setup
 
-- Project created in Supabase. Project URL + anon (public) key go in `.env` as
-  `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. Never the service role key.
-- Run `fulfillment_schema.sql` once in the SQL editor. It creates `spine.*`
-  (employees, role_grants, activity_log, hubspot_companies, current_employee_id,
-  current_user_can_see) and `public.*` domain tables, with RLS on every table,
-  and seeds 407 employees, 31 grants, 176 companies/accounts, 328 vas, and
-  sample builds/tickets.
+- The app reaches Postgres through Laravel's normal DB config in `.env`
+  (host/db/user/password for the Supabase-hosted database). There is no browser
+  Supabase client and no `VITE_SUPABASE_*` keys.
+- Run `fulfillment_schema.sql` once in the database (Supabase SQL editor). It
+  creates `spine.*` (employees, role_grants, activity_log, hubspot_companies) and
+  `public.*` domain tables and seeds the data. Apply later schema changes (e.g.
+  `option_set` and the universal account columns) as SQL the same way.
+- `public/build` is gitignored; the server runs `npm run build` after pulling.
 - npm deps are fixed by the Dependency policy (see that section), not chosen per
-  app: `@supabase/supabase-js`, `react-router-dom`, `lucide-react` (icons),
-  `recharts` (charts). Do not add a library outside that set without updating the
-  policy table.
+  app: `lucide-react` (icons), `recharts` (charts), plus `react`/`react-dom`. Do
+  not add a library outside that set without updating the policy table.
 
-### Identity and RLS testing
+### Identity
 
-- Today `useSession` maps the magic-link auth user to a `spine.employees` row by
-  email. For local RLS testing without auth, set `VITE_DEV_EMPLOYEE_ID` in
-  `.env` to a spine UUID and the shell acts as that person.
-- Production wiring: add a Supabase access-token hook that puts `employee_id`
-  into the JWT claims; then `spine.current_employee_id()` reads the claim. That
-  hook is the one production-only piece.
+- Auth is a passwordless magic link handled by Laravel (`/login` ->
+  `MagicLinkController`). On verify, Laravel logs the user in, maps them to their
+  `spine.employees` row, and `welcome.blade.php` injects the identity as
+  `window.__AUTH__`, which `lib/useSession.js` reads synchronously.
+- The actor for every audit write is taken from the server session
+  (`App\Support\ActivityLogger`), never from request input, so the trail cannot
+  be spoofed.
 
 ## The recurring job: translating a teammate's file (standing playbook)
 
@@ -118,14 +126,16 @@ they designed stays intact; only the data source underneath changes.
 2. **Classify each.** People -> reads from `spine.employees`. Agencies -> reads
    from `spine.hubspot_companies` joined to `public.accounts`. Domain data ->
    reads/writes against that app's own tables.
-3. **Swap arrays for Supabase queries behind a small hook**, keeping the shape
-   the component already expects so the JSX barely changes.
+3. **Swap arrays for Laravel `/api` fetches behind a small hook** (through
+   `lib/api.js`), keeping the shape the component already expects so the JSX
+   barely changes.
 4. **Replace their invented current user** with `session.employee` from the
    shell. Map any name they key on (`"Kristel"`, `"Sam"`) to a spine UUID on the
    way in; render the name back out. Their files will ALWAYS do names-not-UUIDs;
    this mapping is permanent, not a one-off.
-5. **Turn state mutations into Supabase writes + a matching `activity_log`
-   insert**, namespaced `<app>.<entity>.<verb>`.
+5. **Turn state mutations into Laravel `/api` writes.** The controller does the
+   DB write and the matching `activity_log` insert, namespaced
+   `<app>.<entity>.<verb>`.
 6. **Fold into the shell:** new folder under `apps/`, add one entry to
    `registry.js` (key, label, path, lazy import), wrap comes for free via the
    shell's per-route error boundary.
@@ -164,8 +174,8 @@ job. The complete approved set:
 | Job | Library | Imported by |
 |-----|---------|-------------|
 | UI framework | `react`, `react-dom` | everything |
-| Routing | `react-router-dom` | shell only (apps get their route from the shell) |
-| Data | `@supabase/supabase-js` | shell only (apps receive `supabase` as a prop, never import the client) |
+| Routing | (none in use) | the Portal host switches pages in memory; Laravel's catch-all serves deep links. `react-router-dom` is installed but currently unused. |
+| Data | `lib/api.js` -> Laravel `/api` | every app (apps fetch JSON; no browser database client) |
 | Icons | `lucide-react` | any app |
 | Charts | `recharts` | any app |
 
@@ -200,9 +210,12 @@ Rules:
 - `public.accounts` is a fulfillment extension on a `spine.hubspot_companies`
   row; agency name/phone/website come from the company mirror.
 
-## Visibility rules (in spine.current_user_can_see)
+## Visibility rules (the spine's target model)
 
-Union of a person's grants plus implicit self-grant. owner: everyone. admin:
+This is the intended visibility model for the spine, not what is enforced today.
+Today access is gated in Laravel (and RLS is flattened on the POC database); these
+predicates are the target to implement on cutover. Union of a person's grants
+plus implicit self-grant. owner: everyone. admin:
 country-wide, or department-wide across both countries (this is how a director
 is expressed), or both. payroll: their country, comp fields only. team lead: one
 hop down the reporting line, including Client-group VAs (blank department, so not
@@ -219,17 +232,13 @@ direct, capable. No em dashes, no buzzwords.
 
 ## Next steps (in order)
 
-1. Push the shell scaffold (`mainapp.jsx`, `lib/*`, `apps/registry.js`,
-   `welcome.blade.php`, the example app) to `main`. Add the npm deps.
-2. Put `.env` values in; run `fulfillment_schema.sql` in Supabase.
-3. Translate each existing app branch into `apps/<app>/index.jsx` using the
-   playbook; register each in `registry.js`.
-4. Migrate the domain seed data still living in app arrays (courses/modules/
-   lessons from training-tracker; meetings/projects/goals/etc from
-   ClientProfile; full builds and tickets sets).
-5. Replace every `console.log("[activity_log]", ...)` stub with `logActivity`.
-6. Add the Supabase access-token hook; verify each app respects RLS as different
-   users.
+1. Wire the remaining Client Profile tabs (CRM, Forms, Reporting, Benchmarking,
+   Requests, Timeline) to real data and persist them.
+2. Build the in-app admin UI to manage `option_set` values (today edited in the DB).
+3. Adopt the universal account endpoint (`/api/accounts/{id}/universal`) on more
+   surfaces (e.g. Portal Accounts editing, Dev Support).
+4. Replace the remaining sample/in-session data in apps with API-backed data.
+5. Optionally record before->after values in the audit log for field edits.
 
 ## Open questions
 
