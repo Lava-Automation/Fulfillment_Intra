@@ -1,0 +1,44 @@
+[
+  {
+    "date": "2026-06-25",
+    "area": "Activity Logs",
+    "title": "Added the Activity Logs section",
+    "reason": "Give the team one place to see both in-app value changes (the audit trail) and the code/feature changes we make, each with the reasoning. In-app changes read spine.activity_log; feature changes read this curated changelog.",
+    "author": "Claude + Nassim"
+  },
+  {
+    "date": "2026-06-25",
+    "area": "Portal",
+    "title": "Removed Training Tracker and Trainer Workload from the hub",
+    "reason": "The training team is building their own portal for those apps. Removed them from the shell directory; their folders and Laravel endpoints remain dormant for easy reversal.",
+    "author": "Claude + Nassim"
+  },
+  {
+    "date": "2026-06-25",
+    "area": "Client Profile",
+    "title": "Added the Build Score tab",
+    "reason": "Bring back the per-account Build Score view from the old accounts page: a client 1-10 self-score plus a LAVA score derived from the 15 standard automation pipelines.",
+    "author": "Claude + Nassim"
+  },
+  {
+    "date": "2026-06-25",
+    "area": "Portal",
+    "title": "Rebuilt the Portal as a thin shell directory",
+    "reason": "Client Profile is now the main accounts navigation. Stripped the Portal's own Accounts/Dashboard/VA Overview and the dead Tools/Team placeholders down to a clean launcher for the real apps.",
+    "author": "Claude + Nassim"
+  },
+  {
+    "date": "2026-06-25",
+    "area": "Docs",
+    "title": "Aligned all in-repo docs and comments to the Laravel-API architecture",
+    "reason": "CLAUDE.md and REVIEW.md still described the superseded browser-to-Supabase design. Brought every self-description in line with React to Laravel /api to Postgres, and dropped the dead supabase prop.",
+    "author": "Claude + Nassim"
+  },
+  {
+    "date": "2026-06-24",
+    "area": "Universal data",
+    "title": "Shared option_set pool + edit-anywhere universal account fields",
+    "reason": "One source of truth for standard company fields so a change in any app reflects everywhere. Added the option_set dropdown pool and the universal account endpoint; QAQC now reads CRM from the account.",
+    "author": "Claude + Nassim"
+  }
+]

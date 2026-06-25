@@ -26,18 +26,8 @@ export const APPS = [
     path: '/client-profiles',
     component: lazy(() => import('./clientProfile/index.jsx')),
   },
-  {
-    key: 'training',
-    label: 'Training Tracker',
-    path: '/training',
-    component: lazy(() => import('./training/index.jsx')),
-  },
-  {
-    key: 'trainerWorkload',
-    label: 'Trainer Workload',
-    path: '/trainer-workload',
-    component: lazy(() => import('./trainerWorkload/index.jsx')),
-  },
+  // Training Tracker and Trainer Workload were removed from the hub (the training
+  // team is building their own portal). Their folders/endpoints remain for now.
   {
     key: 'qaqc',
     label: 'QAQC',

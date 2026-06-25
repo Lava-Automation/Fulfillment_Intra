@@ -703,7 +703,7 @@ const BENCH_METRICS = [
   { key: "rev",  label: "Review growth",     net: 40 },
 ];
 
-const TABS = ["Overview", "LAVA OS", "General", "CRM", "Forms", "Reporting", "Meetings", "Requests", "People", "Timeline"];
+const TABS = ["Overview", "LAVA OS", "General", "CRM", "Forms", "Reporting", "Meetings", "Requests", "People", "Timeline", "Build Score"];
 function TabNav({ active, onChange }) {
   return (
     <div style={{ display: "flex", gap: 24, padding: "0 28px", borderBottom: `1px solid ${N.line}`, background: B.white, flexWrap: "wrap" }}>
@@ -713,6 +713,79 @@ function TabNav({ active, onChange }) {
           <button key={t} onClick={() => onChange(t)} style={{ background: "none", border: "none", cursor: "pointer", padding: "15px 0", fontFamily: FONT_BODY, fontSize: 14, fontWeight: on ? 600 : 400, color: on ? B.darkBlue : N.muted, borderBottom: `2px solid ${on ? B.red : "transparent"}`, marginBottom: -1 }}>{t}</button>
         );
       })}
+    </div>
+  );
+}
+
+// ── Build Score ────────────────────────────────────────────────────
+// Worked-example tab (in-session, not yet persisted): a client self-score (1-10)
+// plus a LAVA score derived from how many of the 15 standard automation pipelines
+// the agency runs. Ported from the original accounts "Build Score" view.
+const BUILD_PIPELINES = [
+  "Lead Generation Pipeline", "Lead Routing & Assignment", "Email Nurture Sequence", "Follow-Up Automation",
+  "Appointment Setting Pipeline", "CRM Automation", "Client Onboarding Automation", "Review Generation Pipeline",
+  "Renewal / Retention Pipeline", "Reporting & Analytics Dashboard", "Referral Pipeline",
+  "Social Media Automation", "SMS Outreach Automation", "Internal Notification System", "Deal Close Automation",
+];
+const buildScoreColor = (n) => (n >= 8 ? B.teal : n >= 4 ? "#B07D10" : B.red);
+function BuildScore() {
+  const [checked, setChecked] = useState({});
+  const [clientScore, setClientScore] = useState(7);
+  const [clientNotes, setClientNotes] = useState("");
+
+  const activeCount = Object.values(checked).filter(Boolean).length;
+  const lavaScore = Math.round((activeCount / BUILD_PIPELINES.length) * 10);
+  const lavaLabel = lavaScore >= 8 ? "Strong" : lavaScore >= 6 ? "On Track" : lavaScore >= 4 ? "Needs Attention" : "At Risk";
+  const clientLabel = { 1: "Critical", 2: "Critical", 3: "Poor", 4: "Poor", 5: "Fair", 6: "Fair", 7: "Good", 8: "Good", 9: "Excellent", 10: "Excellent" }[clientScore];
+
+  const bigNum = { fontFamily: FONT_BODY, fontSize: 52, fontWeight: 700, color: B.red, lineHeight: 1 };
+  const pill = (color) => ({ ...DISPLAY, fontSize: 10.5, padding: "3px 10px", borderRadius: 8, color, border: `1px solid ${color}44`, background: color + "18", marginLeft: 4 });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 18 }}>
+        <Card>
+          <SectionHeading icon={Target}>Client scoring</SectionHeading>
+          <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 12 }}>How the client feels they are performing.</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <span style={bigNum}>{clientScore}</span>
+            <span style={{ fontSize: 12, color: N.faint }}>/10</span>
+            <span style={pill(buildScoreColor(clientScore))}>{clientLabel}</span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+              <button key={n} onClick={() => setClientScore(n)} style={{ width: 34, height: 34, borderRadius: 8, border: `1px solid ${N.line}`, background: n === clientScore ? B.red : N.fill, color: n === clientScore ? B.white : N.muted, fontFamily: FONT_BODY, fontSize: 13, fontWeight: 500, cursor: "pointer" }}>{n}</button>
+            ))}
+          </div>
+          <div style={{ ...DISPLAY, fontSize: 10, color: N.faint, marginBottom: 6 }}>Notes</div>
+          <textarea value={clientNotes} onChange={(e) => setClientNotes(e.target.value)} rows={3} placeholder="Client feedback or sentiment notes..." style={{ width: "100%", boxSizing: "border-box", fontFamily: FONT_BODY, fontSize: 13, color: B.black, border: `1px solid ${N.line}`, borderRadius: 8, padding: "9px 11px", resize: "vertical", lineHeight: 1.5 }} />
+        </Card>
+        <Card>
+          <SectionHeading icon={Gauge}>LAVA scoring</SectionHeading>
+          <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 12 }}>Based on the active pipelines selected below.</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+            <span style={bigNum}>{lavaScore}</span>
+            <span style={{ fontSize: 12, color: N.faint }}>/10</span>
+            <span style={pill(buildScoreColor(lavaScore))}>{lavaLabel}</span>
+          </div>
+          <div style={{ height: 8, background: N.fill, border: `1px solid ${N.line}`, borderRadius: 5, overflow: "hidden", marginBottom: 7 }}>
+            <div style={{ width: `${lavaScore * 10}%`, height: "100%", background: buildScoreColor(lavaScore), transition: "width .5s ease" }} />
+          </div>
+          <div style={{ fontSize: 12, color: N.faint }}>{activeCount} of {BUILD_PIPELINES.length} pipelines active</div>
+        </Card>
+      </div>
+      <Card>
+        <SectionHeading icon={ListChecks}>Active pipelines</SectionHeading>
+        <div style={{ fontSize: 12.5, color: N.muted, marginBottom: 14 }}>Select the pipelines this client is running — the LAVA score updates automatically.</div>
+        <div style={{ border: `1px solid ${N.line}`, borderRadius: 10, overflow: "hidden" }}>
+          {BUILD_PIPELINES.map((p, i) => (
+            <label key={p} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 14px", borderBottom: i < BUILD_PIPELINES.length - 1 ? `1px solid ${N.line}` : "none", cursor: "pointer", background: checked[p] ? N.fill : B.white }}>
+              <input type="checkbox" checked={!!checked[p]} onChange={(e) => setChecked((prev) => ({ ...prev, [p]: e.target.checked }))} style={{ width: 16, height: 16, accentColor: B.red, cursor: "pointer", flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, color: B.black }}>{p}</span>
+            </label>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -4378,6 +4451,7 @@ export default function ClientProfileApp({ session, accountId }) {
                   {tab === "Requests" && <RequestsTab tickets={tickets} onUpdate={updateTicket} />}
                   {tab === "People" && <People client={realClient} photos={photos} setPhoto={setPhoto} team={realTeam} vas={realVAs} />}
                   {tab === "Timeline" && <TimelineGantt rocks={rocks} todos={todos} />}
+                  {tab === "Build Score" && <BuildScore />}
                 </div>
               </>
           </>
